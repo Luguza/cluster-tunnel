@@ -21,6 +21,16 @@ class ConfigCommandsMixin:
         import yaml
 
         from cluster_tunnel import config as config_mod
+        from cluster_tunnel import paths
+
+        if paths.using_legacy_dirs():
+            # stderr, so `--path` and `--show` stay machine-readable.
+            click.secho(
+                f"note: using the legacy folder {paths.legacy_config_dir()}. "
+                f"Move it to {paths.default_config_dir()} to adopt the new location.",
+                fg="yellow",
+                err=True,
+            )
 
         path = config_mod.resolve_config_path(self.config_path)
 

@@ -9,14 +9,39 @@ from appdirs import user_cache_dir, user_config_dir
 from cluster_tunnel import constants
 
 
+def default_config_dir() -> Path:
+    """The config dir for new installs, with no author folder on Windows."""
+    return Path(user_config_dir(constants.APP_NAME, appauthor=False))
+
+
+def legacy_config_dir() -> Path:
+    """The config dir 0.5.0 and earlier used (differs from the default on Windows only)."""
+    return Path(user_config_dir(constants.APP_NAME, constants.LEGACY_APP_AUTHOR))
+
+
+def using_legacy_dirs() -> bool:
+    """True if an existing install still lives in the legacy author folder.
+
+    The legacy folder is used only while the default one does not exist, so a
+    new folder always wins. Config and cache follow the same decision, so they
+    never end up split across the two locations.
+    """
+    legacy = legacy_config_dir()
+    return legacy != default_config_dir() and legacy.is_dir() and not default_config_dir().exists()
+
+
 def config_dir() -> Path:
     """~/.config/cluster-tunnel (XDG-aware, cross-platform)."""
-    return Path(user_config_dir(constants.APP_NAME, constants.APP_AUTHOR))
+    if using_legacy_dirs():
+        return legacy_config_dir()
+    return default_config_dir()
 
 
 def cache_dir() -> Path:
     """~/.cache/cluster-tunnel (XDG-aware, cross-platform)."""
-    return Path(user_cache_dir(constants.APP_NAME, constants.APP_AUTHOR))
+    if using_legacy_dirs():
+        return Path(user_cache_dir(constants.APP_NAME, constants.LEGACY_APP_AUTHOR))
+    return Path(user_cache_dir(constants.APP_NAME, appauthor=False))
 
 
 def socket_dir() -> Path:

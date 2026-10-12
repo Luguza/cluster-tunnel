@@ -15,9 +15,12 @@ def get_version() -> str:
     return VERSION_PATH.read_text(encoding="utf-8").strip()
 
 
-#: appdirs identifiers for ~/.config/cluster-tunnel and ~/.cache/cluster-tunnel.
+#: appdirs name for ~/.config/cluster-tunnel and ~/.cache/cluster-tunnel.
 APP_NAME = "cluster-tunnel"
-APP_AUTHOR = "jonas"
+
+#: appdirs author that 0.5.0 and earlier passed, which Windows put in the path
+#: (%LOCALAPPDATA%\jonas\cluster-tunnel). Only used to find those installs.
+LEGACY_APP_AUTHOR = "jonas"
 
 #: Commands whose first token marks a job submission subject to the budget guard.
 DEFAULT_GUARD_COMMANDS = ["sbatch", "srun", "salloc"]

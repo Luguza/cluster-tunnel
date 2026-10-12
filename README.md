@@ -466,8 +466,10 @@ control socket is local to that machine.
 | `~/.cache/cluster-tunnel/sockets/<cluster>` | SSH control sockets (the live tunnels). |
 | `~/.cache/cluster-tunnel/sessions/<cluster>.json` | Internal session state (start time, limit). |
 
-On Windows, the config and cache live under `%LOCALAPPDATA%\jonas\cluster-tunnel`,
-and the control sockets inside WSL, at `~/.cache/cluster-tunnel/sockets/` there.
+On Windows, the config lives in `%LOCALAPPDATA%\cluster-tunnel`, the cache in its
+`Cache` subfolder, and the control sockets inside WSL, at `~/.cache/cluster-tunnel/sockets/` there.
+Installs from 0.5.0 keep using `%LOCALAPPDATA%\jonas\cluster-tunnel` until the new
+folder exists; move the folder to switch over.
 
 ---
 
