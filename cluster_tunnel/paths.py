@@ -11,12 +11,12 @@ from cluster_tunnel import constants
 
 def config_dir() -> Path:
     """~/.config/cluster-tunnel (XDG-aware, cross-platform)."""
-    return Path(user_config_dir(constants.APP_NAME, constants.APP_AUTHOR))
+    return Path(user_config_dir(constants.APP_NAME, appauthor=False))
 
 
 def cache_dir() -> Path:
     """~/.cache/cluster-tunnel (XDG-aware, cross-platform)."""
-    return Path(user_cache_dir(constants.APP_NAME, constants.APP_AUTHOR))
+    return Path(user_cache_dir(constants.APP_NAME, appauthor=False))
 
 
 def socket_dir() -> Path:
