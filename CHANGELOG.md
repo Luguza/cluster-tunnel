@@ -9,10 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- On Windows, the config and cache move from `%LOCALAPPDATA%\jonas\cluster-tunnel`
-  to `%LOCALAPPDATA%\cluster-tunnel`: appdirs no longer gets an author name,
-  which only Windows puts in the path. To keep an existing setup, move the
-  folder: `move %LOCALAPPDATA%\jonas\cluster-tunnel %LOCALAPPDATA%\cluster-tunnel`.
+- On Windows, new installs keep the config and cache in `%LOCALAPPDATA%\cluster-tunnel`
+  instead of `%LOCALAPPDATA%\jonas\cluster-tunnel`: appdirs no longer gets an
+  author name, which only Windows puts in the path. Existing installs keep
+  working from the old folder until the new one exists, and `ctun config` notes
+  when the old one is in use. To switch over, move the folder:
+  `move %LOCALAPPDATA%\jonas\cluster-tunnel %LOCALAPPDATA%\cluster-tunnel`.
   Linux and macOS are unchanged.
 
 ## [0.5.0] - 2026-10-08

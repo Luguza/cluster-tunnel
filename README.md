@@ -468,6 +468,8 @@ control socket is local to that machine.
 
 On Windows, the config lives in `%LOCALAPPDATA%\cluster-tunnel`, the cache in its
 `Cache` subfolder, and the control sockets inside WSL, at `~/.cache/cluster-tunnel/sockets/` there.
+Installs from 0.5.0 keep using `%LOCALAPPDATA%\jonas\cluster-tunnel` until the new
+folder exists; move the folder to switch over.
 
 ---
 
