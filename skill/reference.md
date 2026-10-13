@@ -107,7 +107,10 @@ ctun -t <cluster> login [-i|--interactive | --credentials-stdin] [-l|--limit N] 
 - `-i, --interactive`: show a popup window (password + budget limit) so a
   present human enters the credentials; the secret is fed to ssh directly and
   **never exposed to the agent**. Use this whenever you (an agent) trigger a
-  login. `--timeout S` bounds the wait (default 120s).
+  login. `--timeout S` bounds the wait (default 120s). Inside a VS Code window
+  with the ctun extension, that window asks in its own input boxes instead
+  (found through `CTUN_VSCODE_LOGIN`); if the human cancels, the login fails
+  with "Login cancelled."
 - `--credentials-stdin`: for front ends that ask the human themselves (the VS
   Code extension): read `{"password": ..., "otp": ..., "limit": ...}` as JSON on
   stdin, then log in like `-i`. `limit` is optional. **Agents never use this**:
