@@ -22,7 +22,7 @@ SCRIPT_PATH = PACKAGE_DIR / "scripts" / "jobs.sh"
 #: Number of ``|``-separated columns each data line carries. The name is last,
 #: so it is captured with ``split('|', _N_FIELDS - 1)`` and may itself contain
 #: a stray ``|`` without shifting the earlier columns.
-_N_FIELDS = 8
+_N_FIELDS = 9
 
 
 @dataclass
@@ -36,6 +36,7 @@ class Job:
     timelimit: str
     partition: str
     nodes: str
+    start: str  # as Slurm prints it; for a pending job its estimate, or N/A
     name: str
 
     @property
@@ -58,10 +59,10 @@ def parse_line(line: str) -> Job | None:
     parts = line.split("|", _N_FIELDS - 1)
     if len(parts) != _N_FIELDS:
         return None
-    source, jobid, state, elapsed, timelimit, partition, nodes, name = parts
+    source, jobid, state, elapsed, timelimit, partition, nodes, start, name = parts
     if source not in ("active", "done") or not jobid:
         return None
-    return Job(source, jobid, state, elapsed, timelimit, partition, nodes, name)
+    return Job(source, jobid, state, elapsed, timelimit, partition, nodes, start, name)
 
 
 def _order(jobs: list[Job]) -> list[Job]:

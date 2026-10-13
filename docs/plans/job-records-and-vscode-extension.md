@@ -298,7 +298,7 @@ CLI). The ctun changes stay on the local branch `feat/vscode-extension` here.
     last_epoch}, used, used_error}`.
   - `jobs --json`: `{since_minutes, clusters: [{cluster, live, error, jobs:
     [{source: "active"|"done", jobid, state, elapsed, timelimit, partition,
-    nodes, name}]}]}`. All job fields are strings. `state` is raw, e.g.
+    nodes, start, name}]}]}`. All job fields are strings. `state` is raw, e.g.
     `CANCELLED by 504768`, so the extension classifies by prefix.
   - Exit codes (`constants.ExitCode`): 10 `login_required`, 11
     `budget_exhausted`, 12 `budget_guard_error`, each with a
