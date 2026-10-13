@@ -40,6 +40,8 @@ clusters:
   #     unit: jobh                   # job-hours (Slurm job wall-clock; concurrent jobs add up)
   #     guard_commands: [sbatch, srun, salloc, aslurm, aslurmx]
   #     fail_mode: closed
+  #   job_records: true              # `run` stores a record per submitted job in
+  #                                  # ~/.ctun/jobs/ on the cluster (default true)
 
   # HAICORE @ KIT
   # ===============================

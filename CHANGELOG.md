@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Job records.** For each `Submitted batch job <N>` in its output, `ctun run`
+  stores a write-once record on the cluster in
+  `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`, so every machine sees it. It holds
+  the new optional `--project` and `--note`, and facts ctun collects itself: job
+  name and working directory from Slurm, and the git commit, branch, pushed
+  state and uncommitted files there at submit time. A failing fact only warns.
+  `ctun jobs --json` attaches each job's `record` and lists
+  `records_without_job` per cluster. Turn it off per cluster with
+  `job_records: false`.
+- `ctun run --note` checks its `commit:<hash>` and `job:<id>` references before
+  running and refuses with the new exit code 13 (`note_reference_invalid`).
+- `ctun login --credentials-stdin` reads the password, OTP and session limit as
+  JSON on stdin, for front ends such as the VS Code extension.
+
 ### Changed
 
 - On Windows, new installs keep the config and cache in `%LOCALAPPDATA%\cluster-tunnel`

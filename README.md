@@ -284,6 +284,7 @@ reserved for ctun's pre-flight failures:
 | `10` | `login_required` | No live tunnel — run `login` again. |
 | `11` | `budget_exhausted` | A guarded command was blocked: session usage is at/over the limit. |
 | `12` | `budget_guard_error` | A guarded command was blocked because the budget could not be verified (fail-closed). |
+| `13` | `note_reference_invalid` | `run --note` names a `commit:<hash>` or `job:<id>` the cluster does not know; nothing ran. |
 | *N* | — | The remote command's **own** exit code (0–255), propagated unchanged. |
 | `2` | — | Usage error (e.g. no command after `--`). |
 

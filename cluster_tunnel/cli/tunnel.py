@@ -5,6 +5,31 @@ from __future__ import annotations
 import rich_click as click
 
 
+def _stdin_credentials(default_limit: float | None):
+    """Read ``{"password", "otp", "limit"}`` from stdin; ``limit`` falls back to ``default_limit``.
+
+    The secrets come through a pipe, never argv or the environment, like the
+    login window's own hand-off.
+    """
+    import json
+    import sys
+
+    from cluster_tunnel.popup import Credentials
+
+    try:
+        raw = json.loads(sys.stdin.read())
+    except ValueError as exc:
+        raise click.ClickException(f"--credentials-stdin: stdin is not JSON ({exc}).") from None
+    if not isinstance(raw, dict):
+        raise click.ClickException("--credentials-stdin: expected a JSON object.")
+    password, otp, limit = raw.get("password") or "", raw.get("otp") or None, raw.get("limit", default_limit)
+    if not isinstance(password, str) or not (otp is None or isinstance(otp, str)):
+        raise click.ClickException("--credentials-stdin: password and otp must be strings.")
+    if limit is not None and not isinstance(limit, (int, float)):
+        raise click.ClickException("--credentials-stdin: limit must be a number or null.")
+    return Credentials(password=password, otp=otp, limit=None if limit is None else float(limit))
+
+
 class TunnelCommandsMixin:
     """Mixin providing the tunnel lifecycle commands."""
 
@@ -12,12 +37,18 @@ class TunnelCommandsMixin:
     @click.pass_obj
     @click.option("-i", "--interactive", is_flag=True, help="Pop up a window for a present human to enter the password and OTP.")
     @click.option("-l", "--limit", type=float, default=None, help="Session compute budget (overrides config session_limit; -1 = infinite/unguarded).")
+    @click.option(
+        "--credentials-stdin", is_flag=True,
+        help='Read {"password", "otp", "limit"} as JSON on stdin instead of popping up a window (for front ends such as the VS Code extension).',
+    )
     @click.option("--timeout", type=int, default=120, help="Seconds to wait for an interactive login to complete.")
     @click.option(
         "-v", "--verbose", count=True,
         help="Show ssh's own connection diagnostics on errors (repeatable: -v, -vv, -vvv).",
     )
-    def login_command(self, interactive: bool, limit: float | None, timeout: int, verbose: int) -> None:
+    def login_command(
+        self, interactive: bool, credentials_stdin: bool, limit: float | None, timeout: int, verbose: int
+    ) -> None:
         """Authenticate once and open the persistent background tunnel.
 
         This is the only step that needs your password and one-time password
@@ -70,17 +101,20 @@ class TunnelCommandsMixin:
 
         if ssh.is_live(spec):
             headline = f"[yellow]●[/yellow] Tunnel to [cyan]{name}[/cyan] is [yellow]already live[/yellow]."
-        elif interactive:
+        elif interactive or credentials_stdin:
             from cluster_tunnel import popup
 
-            if not popup.gui_available():
-                raise click.ClickException(
-                    f"No display for the login dialog; run `ctun -t {name} login` from a terminal."
+            if credentials_stdin:
+                creds = _stdin_credentials(default_limit)
+            else:
+                if not popup.gui_available():
+                    raise click.ClickException(
+                        f"No display for the login dialog; run `ctun -t {name} login` from a terminal."
+                    )
+                creds = popup.prompt_credentials(
+                    name, spec.target, default_limit, unit,
+                    cluster.requires_otp, cluster.requires_password,
                 )
-            creds = popup.prompt_credentials(
-                name, spec.target, default_limit, unit,
-                cluster.requires_otp, cluster.requires_password,
-            )
             if creds is None:
                 raise click.ClickException("Login cancelled.")
             try:

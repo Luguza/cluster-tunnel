@@ -68,6 +68,7 @@ class Cluster(BaseModel):
     description: str = ""
     restrictions: dict[str, Any] = Field(default_factory=dict)
     budget: Optional[Budget] = None
+    job_records: bool = True  # `run` writes a record per submitted job on the cluster
 
     @model_validator(mode="after")
     def _check(self) -> "Cluster":

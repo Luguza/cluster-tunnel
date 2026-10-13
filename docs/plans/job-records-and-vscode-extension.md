@@ -1,6 +1,6 @@
 # Plan: ctun VS Code extension, core first, add-ons on top
 
-Status: core C1–C6 built 2026-10-12; waiting on the core gate (the user uses the `.vsix` for a day). Written 2026-10-12, restructured the same day into
+Status: core C1–C6 and add-ons 1–6 built as a prototype 2026-10-12/13, uncommitted on branch `feat/vscode-extension`. Waiting on the user gates (see "Add-on results"). Written 2026-10-12, restructured the same day into
 a core and add-ons.
 
 References:
@@ -312,6 +312,46 @@ Add-on 6 needs a small ctun change first, e.g. `ctun login --credentials-stdin`
 that reads `{password, otp, limit}` as JSON and calls
 `popup.login_with_password` (already separated from the dialog).
 
+**0.4** Not answered by the maintainers. Provisional (user, 2026-10-12: "go
+ahead with the most reasonable option"): build in the fork only, no PR.
+Records are **on by default**, with a per-cluster opt-out `job_records: false`.
+
+**0.5** Checked on haicore 2026-10-12: the jobs run from a **git checkout on
+the cluster** (`/hkfs/work/workspace_haic/scratch/qa7606-prediction_model/
+Prediction_Model`, `main...origin/main`), so D7 holds: facts from `WorkDir`.
+`scontrol show job <N>` shows `WorkDir`; `squeue -o %Z` gives it too and copes
+with job names that contain spaces, so `facts.sh` uses squeue, then sacct.
+
+**0.6** haicore: `ClusterName = haic`. `$HOME=/home/iti/qa7606` on GPFS
+(`/hkfs/home`), shared by all login nodes. git 2.47 and python3 exist on the
+login node. bwuni3 not checked (no tunnel).
+
+**0.7** `submit.sh` calls plain `sbatch`, which prints `Submitted batch job <N>`.
+Not re-checked with a test job (no compute spent).
+
+**0.8** Not answered. `models/train.py` sets no W&B entity, so the run lives
+under the API key's default entity; project `htfm_multihead`. Provisional:
+settings `ctun.wandb.entity` (empty = the key's default entity, looked up via
+the API) and `ctun.wandb.project`; the key goes in SecretStorage.
+
+Note: the plan names `models/train_htfm.py`; the file is now `models/train.py`.
+
+## Open questions (decided provisionally, for the user to confirm)
+
+1. Records on by default (opt-out per cluster), or opt-in? (0.4)
+2. `records_without_job` sits in each cluster entry of `ctun jobs --json`,
+   not at the top level: a record belongs to one cluster's folder.
+3. D9 check timing: `--note` references are checked **before** the command
+   runs, so a bad note never leaves a submitted job behind. `job:<id>` is
+   checked with sacct/squeue and the records; `commit:<hash>` in the git repos
+   of this project's earlier records. A project with no record yet cannot have
+   commit references checked, so they are rejected (exit 13) with a hint.
+4. "Previous run" (D10) is searched among the records ctun returns for the
+   current window, not the whole history; older ones show as "no earlier run
+   in this window".
+5. Native login (Add-on 6) asks for the password and OTP up front, per the
+   cluster's `requires_password` / `requires_otp`, not per actual ssh prompt.
+
 ## Core results
 
 Built 2026-10-12, first in `vscode/`, now in <https://github.com/Luguza/ctun-vscode> (paths below are relative to that repo).
@@ -348,3 +388,45 @@ in VS Code 1.141 on Windows.
   because the repo has no license yet. Not on the Marketplace. Publishing steps:
   `PUBLISHING.md` in that repo.
 
+## Add-on results
+
+Built 2026-10-13 after the user said to finish the whole plan without review
+("go ahead with the most reasonable option"). The open questions above are the
+choices made on the way. Tests: ctun `uv run pytest -q` 164 passed;
+extension `npm test` 39 passed, `npm run test:host` passes; `.vsix` 34 KB.
+
+- **Add-on 1** (ctun): `records.py`, `facts.py`, `scripts/records.sh`,
+  `scripts/facts.sh`; `run --project/--note`; `ssh.run_capturing` streams the
+  output and keeps it to find `Submitted batch job <N>`; `jobs --json` adds
+  `record`, `records_without_job`, `records_error`; config `job_records`.
+  Checked live on haicore (read-only): `facts.sh` for a queued job returns
+  cluster `haic`, workdir, commit, pushed, 8 uncommitted files; `records.sh
+  list` returns nothing yet. **Not done:** no record was written on the
+  cluster (that needs a real submission), and the gate "a record shows on a
+  second machine" is the user's.
+- **Add-on 2**: project groups, project filter, Projects view with counts.
+- **Add-on 3**: ctun `notes.py` + `scripts/note_refs.sh`, exit code 13,
+  checked before the run (open question 3). Extension: note under each job,
+  Confirm/Edit/Discard in `globalState` with `setKeysForSync`, "To review"
+  cards, activity-bar badge, status-bar count. Edit uses an input box, not an
+  inline text area. **Not checked:** Settings Sync across two machines.
+- **Add-on 4**: details with commit, pushed (amber when not), uncommitted
+  count, "as of submit time", submitter, previous run (D10, within the window,
+  open question 4) and the commit list from `ctun run -- git log` on request.
+- **Add-on 5**: Prediction_Model `models/train.py` appends `slurm:<id>` to
+  the run's tags (5 lines, **uncommitted**; the cluster checkout needs it
+  pushed and pulled). Extension: `wandb.ts` (GraphQL, run by tag, default
+  entity via `viewer`), key in SecretStorage, settings `ctun.wandb.*`.
+  Tested with a fixture API response only. **Not checked:** that W&B keeps
+  the earlier tags of a resumed run (plan's Done-when); wandb is expected to
+  restore tags on `resume="allow"`, but no run was made.
+- **Add-on 6**: ctun `login --credentials-stdin` (JSON on stdin); extension
+  setting `ctun.login.method: vscode` asks budget, OTP and password in input
+  boxes and pipes them to ctun. Tested with mocks (ctun) and a stdin echo
+  (adapter); no real login was made this way.
+- Visual checks used a fake `ctun.exe` in the scratchpad and the test VS Code:
+  grouped table, notes, review cards, Projects view, badge and status bar
+  render; the details panel is covered by a jsdom renderer test.
+- Not changed: the globally installed skill copy (`~/.claude/skills/
+  cluster-tunnel/`), whose edits auto-push to the user's config repo; re-copy
+  `skill/` after review.
