@@ -159,6 +159,20 @@ def test_check_timeout_reads_as_not_live(tmp_path: Path, monkeypatch) -> None:
     assert not ssh.is_live(spec)
 
 
+def test_check_leaves_ctuns_stdin_unread(tmp_path: Path, monkeypatch) -> None:
+    # wsl.exe drains an inherited stdin, which would eat `login --credentials-stdin`'s JSON.
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    seen = {}
+
+    def fake_run(argv, *a, **k):
+        seen["stdin"] = k.get("stdin")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ssh.check(spec)
+    assert seen["stdin"] is subprocess.DEVNULL
+
+
 def test_windows_open_master_starts_ssh_with_sighup_ignored(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(wsl, "enabled", lambda: True)
     monkeypatch.setattr(ssh, "prepare_socket", lambda spec: None)

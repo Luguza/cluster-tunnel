@@ -192,6 +192,8 @@ def _captured(
 ) -> subprocess.CompletedProcess:
     """Run ``argv`` (through WSL on Windows) with its output captured as text.
 
+    Without ``stdin`` the command reads nothing: wsl.exe would otherwise drain
+    ctun's own stdin, such as the JSON of ``login --credentials-stdin``.
     Output is decoded as UTF-8 explicitly: the platform default (cp1252 on most
     Windows machines) would garble or reject non-ASCII text from the cluster. A
     missing launcher (no ssh, or no wsl.exe on Windows) comes back as exit code
@@ -201,7 +203,7 @@ def _captured(
     try:
         return subprocess.run(
             full,
-            stdin=stdin,
+            stdin=subprocess.DEVNULL if stdin is None else stdin,
             capture_output=True,
             text=True,
             encoding="utf-8",
