@@ -266,6 +266,68 @@ The base for Add-ons 2–4. No UI on its own.
   job-end notifications, upload/download in the Explorer, `ctun info` and
   `ctun logs` in the Clusters view.
 
+### Proposed: command history across sessions (not built)
+
+Today `cmdlog.py` keeps the commands of one session only. A fresh `login` and
+`logout` delete the log, and the Clusters view shows only the count. The goal:
+see every command the agent sent, also from earlier sessions.
+
+- **ctun:**
+  - Do not delete the log on `login` or `logout`. Tag each entry with its
+    `session_id`.
+  - `cmdlog.summary` counts only the entries of the current session, so
+    `status` and "N sent this session" do not change.
+  - On each write, drop entries older than 30 days, the longest "Ended in"
+    window of the jobs table.
+  - `ctun logs` shows the current session, as today; `ctun logs --since 30d`
+    also shows earlier sessions.
+  - Open: move the log from the cache dir to the data dir. The OS or the user
+    may empty the cache at any time.
+  - Docs: `skill/reference.md` (`logs`, `logout`) and `CHANGELOG.md`, which now
+    promise "cleared on `logout` and on a fresh `login`".
+- **Extension:** the "Commands" row expands to the list from
+  `ctun -t <cluster> logs --json`, newest first, with the full command in the
+  tooltip. It is a local call; no SSH.
+- **Trade-off:**
+  - Gain: an audit trail across sessions. A deleted file or an unexpected job
+    can be traced back to the command that caused it.
+  - Cost: commands can carry secrets in their arguments, e.g. a token or a
+    password in a URL. Today they are gone at logout. With this change they stay
+    on disk for up to 30 days, in plain text, readable by anyone with access to
+    the user account.
+  - Redaction is no fix: ctun cannot know which argument is a secret.
+  - Possible mitigation, not decided: the retention as a config option, where
+    `0` keeps today's behaviour.
+  - The temporary log is a documented promise of ctun. Ask the maintainers
+    before a PR.
+- **Not covered:** the log cannot tell the agent from the human; every
+  `ctun run` is logged. To tell them apart needs a marker the agent sets (an
+  environment variable or a flag), a separate decision.
+- **Size:** about 40 lines plus tests in ctun, and the expandable row in the
+  extension.
+
+### Proposed: the agent's output in the command log (not built)
+
+The Commands panel (option G on the canvas
+<https://claude.ai/artifact/VSi89YUN9TKZYeowa8qmLt>) shows the output of the
+user's own commands. The goal: a click on an agent's command shows its output
+too. Today `cmdlog.py` stores no output.
+
+- **ctun:** `ctun run` already captures stdout in `ssh.run_capturing` to find
+  `Submitted batch job <N>`. Write that text, the exit code and the duration
+  into the log entry, capped at the last 200 lines or 64 KB. Do it in the same
+  change that stores the submitted job IDs in the log entry.
+- **Limits:**
+  - Only stdout; stderr passes straight through. To capture it too, pipe it
+    as well, which can change the order of stdout and stderr lines.
+  - No output for `--tty` commands or for clusters with `job_records` off;
+    they take the other code path.
+- **Trade-off:** output can hold data, paths and secrets, more than a command
+  line. Keep the output session-only (deleted at `logout`), also if the
+  command history above keeps commands for 30 days.
+- **Rejected:** re-running a command to show its output. An `sbatch` would
+  submit again, and results change over time.
+
 ## Not in this plan
 
 - **Budget-guard gap.** `budget.is_guarded` checks only the first command
