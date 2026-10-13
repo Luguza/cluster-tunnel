@@ -66,8 +66,9 @@ class ContextCommandsMixin:
     def logs_command(self, as_json: bool) -> None:
         """Print the log of commands sent to a cluster (requires -t <cluster>).
 
-        Only the commands are recorded — never their output. The log is
-        temporary: it is cleared on `logout` and on a fresh `login`.
+        Only the commands and the IDs of the jobs they submitted are recorded —
+        never their output. The log is temporary: it is cleared on `logout` and
+        on a fresh `login`.
         """
         import shlex
         from datetime import datetime
@@ -93,7 +94,9 @@ class ContextCommandsMixin:
         for rec in records:
             ts = datetime.fromtimestamp(rec["epoch"]).strftime("%Y-%m-%d %H:%M:%S")
             cmd = shlex.join(rec.get("command", []))
-            self.cons.print(f"  [dim]{ts}[/dim]  [orange3]{cmd}[/orange3]")
+            job_ids = rec.get("job_ids", [])
+            jobs = f"  [dim]→ {'job' if len(job_ids) == 1 else 'jobs'} {', '.join(job_ids)}[/dim]" if job_ids else ""
+            self.cons.print(f"  [dim]{ts}[/dim]  [orange3]{cmd}[/orange3]{jobs}")
 
     @click.command("info")
     @click.pass_obj

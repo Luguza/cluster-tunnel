@@ -51,15 +51,16 @@ class ExecutionCommandsMixin:
 
         For each `Submitted batch job <N>` in the output, ctun stores a job record
         on the cluster: `--project`, `--note`, and the facts it collects itself
-        (commit, uncommitted files, working directory, ...). The command's output
-        and exit code stay as they are.
+        (commit, uncommitted files, working directory, ...), and adds the job ID
+        to the command's line in `ctun logs`. The command's output and exit code
+        stay as they are.
         """
         import shlex
 
         from cluster_tunnel import budget as budget_mod
         from cluster_tunnel import cmdlog
         from cluster_tunnel import config as config_mod
-        from cluster_tunnel import ssh
+        from cluster_tunnel import records, ssh
 
         if not command:
             raise click.UsageError("Provide a command after `--`, e.g. `run -- squeue --me`.")
@@ -134,16 +135,20 @@ class ExecutionCommandsMixin:
                 click.secho(f"budget: {base}", fg="bright_black", err=True)
 
         # Log the command (not its output) so `status` can show activity.
-        cmdlog.record(name, tokens)
+        entry_id = cmdlog.record(name, tokens)
         records_on = config.clusters[name].job_records and not tty
         if (project or note) and not records_on:
             reason = "--tty hides the output" if tty else "job_records is off for this cluster"
             click.secho(f"ctun: no job record written ({reason}).", fg="yellow", err=True)
-        if not records_on:
-            raise SystemExit(ssh.run(spec, tokens, tty=tty))
+        if tty:
+            raise SystemExit(ssh.run(spec, tokens, tty=True))
 
         returncode, output = ssh.run_capturing(spec, tokens)
-        _write_records(spec, output, project=project, note=note, command=tokens)
+        job_ids = records.submitted_job_ids(output)
+        if job_ids:
+            cmdlog.record_jobs(name, entry_id, job_ids)
+        if records_on:
+            _write_records(spec, job_ids, project=project, note=note, command=tokens)
         raise SystemExit(returncode)
 
 
@@ -165,12 +170,12 @@ def _check_note(spec, note: str, project: str | None) -> None:
         )
 
 
-def _write_records(spec, output: str, *, project: str | None, note: str | None, command: list[str]) -> None:
-    """Store a record for each job `output` reports; a failure only warns, never fails the run."""
+def _write_records(spec, job_ids: list[str], *, project: str | None, note: str | None, command: list[str]) -> None:
+    """Store a record for each of ``job_ids``; a failure only warns, never fails the run."""
     from cluster_tunnel import facts as facts_mod
     from cluster_tunnel import records
 
-    for job_id in records.submitted_job_ids(output):
+    for job_id in job_ids:
         facts = facts_mod.collect(spec, job_id)
         for warning in facts.warnings:
             click.secho(f"ctun: {warning}", fg="yellow", err=True)
