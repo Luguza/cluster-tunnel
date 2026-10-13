@@ -24,8 +24,8 @@ SCRIPT = Path(__file__).resolve().parent.parent / "cluster_tunnel" / "scripts" /
 # name carries a space to prove spaces survive.
 _FAKE_SQUEUE = (
     "#!/bin/sh\n"
-    "printf 'active|966737|RUNNING|14:44|7:00:00|booster|1|train job\\n'\n"
-    "printf 'active|966738|PENDING|0:00|7:00:00|booster|1|eval\\n'\n"
+    "printf 'active|966737|RUNNING|14:44|7:00:00|booster|1|2026-10-13T14:02:11|train job\\n'\n"
+    "printf 'active|966738|PENDING|0:00|7:00:00|booster|1|2026-10-14T09:30:00|eval\\n'\n"
 )
 
 # Fake sacct: one job that ended 10 min ago (inside a 60-min window), one that
@@ -34,9 +34,9 @@ _FAKE_SACCT = (
     "#!/bin/sh\n"
     'inside=$(date -d "-10 minutes" +%Y-%m-%dT%H:%M:%S)\n'
     'outside=$(date -d "-100 minutes" +%Y-%m-%dT%H:%M:%S)\n'
-    'printf "%s|1001|COMPLETED|00:10:00|01:00:00|small|1|inside_job\\n" "$inside"\n'
-    'printf "%s|1002|COMPLETED|00:10:00|01:00:00|small|1|outside_job\\n" "$outside"\n'
-    'printf "Unknown|1003|RUNNING|00:05:00|01:00:00|small|1|running_job\\n"\n'
+    'printf "%s|1001|COMPLETED|00:10:00|01:00:00|small|1|2026-10-13T10:00:00|inside_job\\n" "$inside"\n'
+    'printf "%s|1002|COMPLETED|00:10:00|01:00:00|small|1|2026-10-13T10:00:00|outside_job\\n" "$outside"\n'
+    'printf "Unknown|1003|RUNNING|00:05:00|01:00:00|small|1|2026-10-13T10:00:00|running_job\\n"\n'
 )
 
 
@@ -63,13 +63,14 @@ def _run(tmp_path: Path, since_minutes: str, bash: str) -> str:
 
 def test_active_jobs_always_listed(tmp_path: Path, bash: str) -> None:
     out = _run(tmp_path, "60", bash)
-    assert "active|966737|RUNNING|14:44|7:00:00|booster|1|train job" in out
-    assert "active|966738|PENDING|0:00|7:00:00|booster|1|eval" in out
+    assert "active|966737|RUNNING|14:44|7:00:00|booster|1|2026-10-13T14:02:11|train job" in out
+    assert "active|966738|PENDING|0:00|7:00:00|booster|1|2026-10-14T09:30:00|eval" in out
 
 
 def test_finished_window_filters_by_end(tmp_path: Path, bash: str) -> None:
     out = _run(tmp_path, "60", bash)
-    assert "done|1001|COMPLETED" in out       # ended 10 min ago -> inside window
+    # ended 10 min ago -> inside window; Start passes through before the name
+    assert "done|1001|COMPLETED|00:10:00|01:00:00|small|1|2026-10-13T10:00:00|inside_job" in out
     assert "1002" not in out                  # ended 100 min ago -> outside window
     assert "1003" not in out                  # still running (End=Unknown) -> skipped
 

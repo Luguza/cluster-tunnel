@@ -337,7 +337,7 @@ def test_status_probes_usage_only_when_asked(cfg: Path, monkeypatch) -> None:
 
 def test_jobs_returns_typed_jobs(cfg: Path, monkeypatch) -> None:
     _live(monkeypatch)
-    job = Job("active", "42", "RUNNING", "0:05", "1:00:00", "cpu", "1", "run.sh")
+    job = Job("active", "42", "RUNNING", "0:05", "1:00:00", "cpu", "1", "N/A", "run.sh")
     monkeypatch.setattr("cluster_tunnel.jobs.query", lambda spec, user, since: [job])
     [entry] = api.jobs("c", since_minutes=0)
     assert entry.jobs == [job] and entry.live and entry.error is None
