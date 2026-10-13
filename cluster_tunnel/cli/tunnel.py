@@ -30,6 +30,21 @@ def _stdin_credentials(default_limit: float | None):
     return Credentials(password=password, otp=otp, limit=None if limit is None else float(limit))
 
 
+def _logged_in_through_vscode(name: str, default_limit: float | None) -> bool:
+    """True once the VS Code window that started the agent has logged in; False if no window took it."""
+    from cluster_tunnel import vscode_login
+
+    try:
+        outcome = vscode_login.log_in(name, default_limit)
+    except vscode_login.Unavailable:
+        return False
+    if outcome.status == "cancelled":
+        raise click.ClickException("Login cancelled.")
+    if outcome.status != "live":
+        raise click.ClickException(f"Login to '{name}' in VS Code failed: {outcome.message}")
+    return True
+
+
 class TunnelCommandsMixin:
     """Mixin providing the tunnel lifecycle commands."""
 
@@ -68,7 +83,8 @@ class TunnelCommandsMixin:
         its own (e.g. a coding agent): a small pop-up lets a present human type
         the service password and one-time passcode (OTP) in separate fields,
         which are fed to ssh at their respective prompts — the agent never sees
-        the secrets.
+        the secrets. Inside a VS Code window with the ctun extension, that
+        window asks in its own input boxes instead of the pop-up.
 
         Pass `-v` (or `-vv`/`-vvv`) to surface ssh's own connection diagnostics
         when a login fails — useful for debugging host, auth, or network errors.
@@ -96,11 +112,16 @@ class TunnelCommandsMixin:
         unit = cluster.budget.unit if cluster.budget else "units"
 
         established = False
+        session_started_in_vscode = False
         chosen_limit = default_limit
         headline = ""  # the styled top line of the success panel
 
         if ssh.is_live(spec):
             headline = f"[yellow]●[/yellow] Tunnel to [cyan]{name}[/cyan] is [yellow]already live[/yellow]."
+        elif interactive and _logged_in_through_vscode(name, default_limit):
+            # The window's own `login --credentials-stdin` has started the session.
+            session_started_in_vscode = True
+            headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green] [dim](in VS Code)[/dim]."
         elif interactive or credentials_stdin:
             from cluster_tunnel import popup
 
@@ -158,7 +179,8 @@ class TunnelCommandsMixin:
             sess = session.start(name, limit=chosen_limit, unit=unit)
         else:
             sess = session.load(name)
-            note = "existing session kept; re-auth would reset the budget window"
+            if not session_started_in_vscode:
+                note = "existing session kept; re-auth would reset the budget window"
 
         if sess.get("limit") is not None:
             budget_line = f"  budget   [orange3]{sess['limit']} {sess['unit']}[/orange3]"
