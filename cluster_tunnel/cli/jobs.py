@@ -55,6 +55,28 @@ def _state_style(state: str) -> str:
     return "white"
 
 
+def _attach_records(spec, entry: dict, since_minutes: int) -> None:
+    """Give each job in ``entry`` its ``record`` (or ``None``); list the rest as ``records_without_job``.
+
+    A record without a listed job belongs to a job that finished before the
+    window, or whose accounting is gone. A failure to read the records is
+    reported in ``records_error`` and leaves the jobs as they are.
+    """
+    from cluster_tunnel import records as records_mod
+
+    job_ids = [job["jobid"] for job in entry["jobs"]]
+    try:
+        records = records_mod.list_recent(spec, since_minutes, job_ids)
+    except RuntimeError as exc:
+        entry["records_error"] = str(exc)
+        return
+    by_job = {record.job_id: record.as_dict() for record in records}
+    for job in entry["jobs"]:
+        job["record"] = by_job.pop(job["jobid"], None)
+    entry["records_without_job"] = list(by_job.values())
+    entry["records_error"] = None
+
+
 class JobsCommandsMixin:
     """Mixin providing the `jobs` command."""
 
@@ -98,6 +120,8 @@ class JobsCommandsMixin:
                     entry["jobs"] = [j.as_dict() for j in jobs]
                 except Exception as exc:  # noqa: BLE001 — surface, don't abort the sweep
                     entry["error"] = str(exc)
+            if as_json and entry["live"] and entry["error"] is None and cluster.job_records:
+                _attach_records(spec, entry, since_minutes)
             results.append(entry)
 
         if as_json:

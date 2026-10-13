@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePath, PurePosixPath
 from typing import IO, Optional
@@ -234,6 +235,27 @@ def run(spec: ConnSpec, tokens: list[str], *, tty: bool = False) -> int:
         argv.append("-tt")
     argv += [spec.target, shlex.join(tokens)]
     return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
+
+
+def run_capturing(spec: ConnSpec, tokens: list[str]) -> tuple[int, str]:
+    """Like :func:`run` without a tty, but also return stdout as text.
+
+    The output still streams to this process's stdout as it arrives; it is kept
+    so the caller can read it afterwards (e.g. for ``Submitted batch job <N>``).
+    stdin and stderr pass straight through.
+    """
+    argv = ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)]
+    sys.stdout.flush()
+    out = sys.stdout.buffer
+    kept: list[bytes] = []
+    with subprocess.Popen(wsl.launch(argv, spec.wsl_distro), stdout=subprocess.PIPE) as proc:
+        assert proc.stdout is not None
+        while chunk := proc.stdout.read1(65536):
+            out.write(chunk)
+            out.flush()
+            kept.append(chunk)
+        returncode = proc.wait()
+    return returncode, b"".join(kept).decode("utf-8", "replace")
 
 
 def capture(spec: ConnSpec, tokens: list[str]) -> subprocess.CompletedProcess:

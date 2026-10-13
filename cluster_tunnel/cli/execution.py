@@ -36,9 +36,24 @@ class ExecutionCommandsMixin:
     @click.pass_obj
     @click.option("--tty", is_flag=True, help="Allocate a pseudo-TTY (for interactive remote programs).")
     @click.option("-n", "--dry-run", is_flag=True, help="Run the budget pre-flight check only; don't execute.")
+    @click.option("--project", default=None, help="Project name stored in the record of each job this command submits.")
+    @click.option("--note", default=None, help="Note stored in the record of each job this command submits.")
     @click.argument("command", nargs=-1, type=click.UNPROCESSED)
-    def run_command(self, tty: bool, dry_run: bool, command: tuple[str, ...]) -> None:
-        """Run a command on the cluster: ctun -t <cluster> run -- <cmd...>."""
+    def run_command(
+        self,
+        tty: bool,
+        dry_run: bool,
+        project: str | None,
+        note: str | None,
+        command: tuple[str, ...],
+    ) -> None:
+        """Run a command on the cluster: ctun -t <cluster> run -- <cmd...>.
+
+        For each `Submitted batch job <N>` in the output, ctun stores a job record
+        on the cluster: `--project`, `--note`, and the facts it collects itself
+        (commit, uncommitted files, working directory, ...). The command's output
+        and exit code stay as they are.
+        """
         import shlex
 
         from cluster_tunnel import budget as budget_mod
@@ -59,6 +74,9 @@ class ExecutionCommandsMixin:
                 f"(or `ctun -t {name} login --interactive`) first.",
                 ExitCode.LOGIN_REQUIRED,
             )
+
+        if note:
+            _check_note(spec, note, project)
 
         tokens = list(command)
         config_path = config_mod.resolve_config_path(self.config_path)
@@ -117,4 +135,49 @@ class ExecutionCommandsMixin:
 
         # Log the command (not its output) so `status` can show activity.
         cmdlog.record(name, tokens)
-        raise SystemExit(ssh.run(spec, tokens, tty=tty))
+        records_on = config.clusters[name].job_records and not tty
+        if (project or note) and not records_on:
+            reason = "--tty hides the output" if tty else "job_records is off for this cluster"
+            click.secho(f"ctun: no job record written ({reason}).", fg="yellow", err=True)
+        if not records_on:
+            raise SystemExit(ssh.run(spec, tokens, tty=tty))
+
+        returncode, output = ssh.run_capturing(spec, tokens)
+        _write_records(spec, output, project=project, note=note, command=tokens)
+        raise SystemExit(returncode)
+
+
+def _check_note(spec, note: str, project: str | None) -> None:
+    """Refuse the run (exit 13) if ``note`` names a commit or job the cluster doesn't know."""
+    from cluster_tunnel import notes
+
+    try:
+        unknown = notes.unknown_references(spec, note, project)
+    except RuntimeError as exc:
+        fail(f"Not run: {exc}", ExitCode.NOTE_REFERENCE_INVALID)
+    if unknown:
+        fail(
+            "Not run: the note names references the cluster does not know: "
+            + ", ".join(unknown)
+            + ".\n  Commit references are looked up in the repos of this project's earlier"
+            " records. Fix or drop them, or leave the note out.",
+            ExitCode.NOTE_REFERENCE_INVALID,
+        )
+
+
+def _write_records(spec, output: str, *, project: str | None, note: str | None, command: list[str]) -> None:
+    """Store a record for each job `output` reports; a failure only warns, never fails the run."""
+    from cluster_tunnel import facts as facts_mod
+    from cluster_tunnel import records
+
+    for job_id in records.submitted_job_ids(output):
+        facts = facts_mod.collect(spec, job_id)
+        for warning in facts.warnings:
+            click.secho(f"ctun: {warning}", fg="yellow", err=True)
+        record = records.build(job_id, facts, project=project, note=note, command=command)
+        try:
+            records.write(spec, record)
+        except RuntimeError as exc:
+            click.secho(f"ctun: {exc}", fg="yellow", err=True)
+            continue
+        click.secho(f"ctun: recorded job {job_id}", fg="bright_black", err=True)

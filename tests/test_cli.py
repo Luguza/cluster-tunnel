@@ -486,6 +486,7 @@ def _patch_jobs(monkeypatch, *, live=True, jobs=None, error=None) -> None:
         return jobs or []
 
     monkeypatch.setattr("cluster_tunnel.jobs.query", fake_query)
+    monkeypatch.setattr("cluster_tunnel.records.list_recent", lambda spec, since, ids: [])
 
 
 def test_jobs_renders_table(tmp_path: Path, monkeypatch) -> None:
@@ -553,6 +554,7 @@ def _patch_run(monkeypatch, *, live=True, decision=None, run_rc=0) -> None:
     monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: object())
     monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: live)
     monkeypatch.setattr("cluster_tunnel.ssh.run", lambda spec, tokens, tty=False: run_rc)
+    monkeypatch.setattr("cluster_tunnel.ssh.run_capturing", lambda spec, tokens: (run_rc, ""))
     monkeypatch.setattr("cluster_tunnel.cmdlog.record", lambda name, tokens: None)
     if decision is not None:
         monkeypatch.setattr("cluster_tunnel.budget.decide", lambda *a, **k: decision)

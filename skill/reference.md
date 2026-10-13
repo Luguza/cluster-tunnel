@@ -78,6 +78,11 @@ of a *single* job as it changes state, use `Monitor` (see
 [monitoring-jobs.md](monitoring-jobs.md)). Equivalent to
 `run -- squeue --me` + `run -- sacct`, but formatted and multi-cluster.
 
+With `--json`, each job carries its `record` (see [Job records](#job-records), or
+`null`), and each cluster entry lists `records_without_job`: records written in
+the window whose job is no longer listed. `records_error` reports a failure to
+read the records; the jobs are still listed.
+
 ## `info` — cluster briefing
 
 ```
@@ -113,7 +118,7 @@ the cluster's description is still one string: say so and leave
 ## `login` — authenticate and open the tunnel
 
 ```
-ctun -t <cluster> login [-i|--interactive] [-l|--limit N] [--timeout S] [-v]
+ctun -t <cluster> login [-i|--interactive | --credentials-stdin] [-l|--limit N] [--timeout S] [-v]
 ```
 
 - Opens the persistent SSH master connection. This is the only step needing the
@@ -122,6 +127,10 @@ ctun -t <cluster> login [-i|--interactive] [-l|--limit N] [--timeout S] [-v]
   present human enters the credentials; the secret is fed to ssh directly and
   **never exposed to the agent**. Use this whenever you (an agent) trigger a
   login. `--timeout S` bounds the wait (default 120s).
+- `--credentials-stdin`: for front ends that ask the human themselves (the VS
+  Code extension): read `{"password": ..., "otp": ..., "limit": ...}` as JSON on
+  stdin, then log in like `-i`. `limit` is optional. **Agents never use this**:
+  they never hold the secrets.
 - `-l, --limit N`: this session's compute budget, overriding the cluster's
   configured `session_limit`. `-1` means infinite / unguarded.
 - `-v` (repeatable `-vv`/`-vvv`): surface ssh's own diagnostics on failure.
@@ -133,7 +142,7 @@ panel with the target and the session's budget.
 ## `run` — run a command through the tunnel
 
 ```
-ctun -t <cluster> run [--tty] [-n|--dry-run] -- <command> [args...]
+ctun -t <cluster> run [--tty] [-n|--dry-run] [--project NAME] [--note TEXT] -- <command> [args...]
 ```
 
 - Everything after `--` is forwarded to the cluster **exactly as written**.
@@ -151,6 +160,36 @@ budget to stderr before the command's own output, so it never pollutes stdout.
 ```
 ctun -t haicore run -- squeue --me
 ctun -t haicore run -- bash -c 'cd $WORK && sbatch job.sh'
+```
+
+### Job records
+
+For every `Submitted batch job <N>` line in the output, `run` stores a
+**job record** on the cluster, in `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`.
+Every machine that submits to that cluster sees the same records. A record is
+written once and never changed. It holds:
+
+- `--project NAME` and `--note TEXT`, if given (both optional);
+- facts ctun collects itself, never from you: the job's name and working
+  directory (from Slurm), and the git state there at submit time (`commit`,
+  `branch`, `pushed`, `uncommitted` files), plus the command, the submitting
+  host and the time.
+
+A fact ctun cannot read is stored as `null` with a warning; it never blocks the
+submission. The command's output and exit code are unchanged. Records are off
+with `--tty` (the output is not read) and for a cluster with
+`job_records: false` in the config.
+
+**Notes are drafts for the human.** Put only facts from this session into
+`--note` (what changed and why), never guesses about results. Refer to a commit
+as `commit:<hash>` and to a job as `job:<id>`; ctun checks each reference before
+it runs the command, and refuses the run with exit code 13
+(`ctun-error: note_reference_invalid`) if one cannot be found. Commit references
+are looked up in the repos of the project's earlier records, so leave them out
+of a project's first note. When unsure, leave the note out.
+
+```
+ctun -t haicore run --project htfm --note "lr 1e-3 after commit:541b4cb, rerun of job:1695485" -- bash -c 'cd $REPO && ./submit.sh'
 ```
 
 ## `upload` / `download` — transfer files over the tunnel
