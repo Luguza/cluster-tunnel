@@ -243,6 +243,11 @@ Prints the timestamped list of commands sent to the cluster during the current
 session. **Only the commands are recorded — never their output.** The log is
 temporary: cleared on `logout` and on a fresh `login`. Requires a target.
 
+A command whose output had `Submitted batch job <N>` lines also shows the job
+IDs, e.g. `sbatch train.sh  → job 4818213`; in the JSON, that command carries
+`"job_ids": ["4818213"]`. A `run --tty` logs no job IDs (ctun does not see its
+output).
+
 ## `logout` — close the tunnel
 
 ```

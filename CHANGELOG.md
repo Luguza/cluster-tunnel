@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   running and refuses with the new exit code 13 (`note_reference_invalid`).
 - `ctun login --credentials-stdin` reads the password, OTP and session limit as
   JSON on stdin, for front ends such as the VS Code extension.
+- The command log keeps the IDs of the jobs each `ctun run` submitted, on every
+  cluster, also with `job_records: false`. `ctun logs` shows them after the
+  command (`→ job 4818213`), and `ctun logs --json` gives them as `job_ids`.
+  Older logs still read.
 
 ### Changed
 

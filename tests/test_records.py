@@ -57,6 +57,7 @@ def _patch_run(monkeypatch, cluster: FakeCluster, output: str, rc: int = 0) -> N
     monkeypatch.setattr("cluster_tunnel.ssh.run_capturing", lambda spec, tokens: (rc, output))
     monkeypatch.setattr("cluster_tunnel.ssh.feed_script", cluster.feed_script)
     monkeypatch.setattr("cluster_tunnel.cmdlog.record", lambda name, tokens: None)
+    monkeypatch.setattr("cluster_tunnel.cmdlog.record_jobs", lambda name, entry_id, job_ids: None)
 
 
 def test_run_writes_a_record_with_the_facts(tmp_path: Path, monkeypatch) -> None:
@@ -103,12 +104,11 @@ def test_a_failing_fact_warns_but_still_records(tmp_path: Path, monkeypatch) -> 
     assert cluster.written["7"]["slurm_cluster"] is None
 
 
-def test_records_off_runs_without_capturing(tmp_path: Path, monkeypatch) -> None:
+def test_records_off_writes_no_record(tmp_path: Path, monkeypatch) -> None:
     config = _cfg(tmp_path, monkeypatch)
     config.write_text("clusters:\n  localhost:\n    host: localhost\n    job_records: false\n")
     cluster = FakeCluster()
     _patch_run(monkeypatch, cluster, "Submitted batch job 7\n")
-    monkeypatch.setattr("cluster_tunnel.ssh.run", lambda spec, tokens, tty=False: 0)
     r = CliRunner().invoke(cli, ["-t", "localhost", "run", "--note", "x", "--", "sbatch", "job.sh"])
     assert r.exit_code == 0
     assert "no job record written" in r.output
