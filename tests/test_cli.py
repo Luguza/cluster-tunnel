@@ -494,7 +494,7 @@ def test_jobs_renders_table(tmp_path: Path, monkeypatch) -> None:
 
     _cfg(tmp_path, monkeypatch)
     _patch_jobs(monkeypatch, jobs=[
-        Job("active", "966737", "RUNNING", "14:44", "7:00:00", "booster", "1", "train.sh"),
+        Job("active", "966737", "RUNNING", "14:44", "7:00:00", "booster", "1", "2026-10-13T14:02:11", "train.sh"),
     ])
     r = CliRunner().invoke(cli, ["-t", "localhost", "jobs"])
     assert r.exit_code == 0
@@ -517,7 +517,7 @@ def test_jobs_json_shape(tmp_path: Path, monkeypatch) -> None:
 
     _cfg(tmp_path, monkeypatch)
     _patch_jobs(monkeypatch, jobs=[
-        Job("done", "960652", "CANCELLED by 30927", "01:56:26", "07:00:00", "booster", "1", "r.sh"),
+        Job("done", "960652", "CANCELLED by 30927", "01:56:26", "07:00:00", "booster", "1", "2026-10-13T12:00:00", "r.sh"),
     ])
     r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "--since", "2h", "--json"])
     assert r.exit_code == 0
@@ -527,6 +527,7 @@ def test_jobs_json_shape(tmp_path: Path, monkeypatch) -> None:
     job = payload["clusters"][0]["jobs"][0]
     assert job["jobid"] == "960652"
     assert job["state"] == "CANCELLED by 30927"  # full raw state kept in JSON
+    assert job["start"] == "2026-10-13T12:00:00"
 
 
 def test_jobs_query_error_is_surfaced_not_fatal(tmp_path: Path, monkeypatch) -> None:

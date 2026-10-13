@@ -2,10 +2,12 @@
 # jobs.sh — ctun job-overview probe. Lists the user's Slurm jobs so `ctun jobs`
 # can render them locally. Emits one pipe-delimited line per job on stdout:
 #
-#   <source>|<jobid>|<state>|<elapsed>|<timelimit>|<partition>|<nodes>|<name>
+#   <source>|<jobid>|<state>|<elapsed>|<timelimit>|<partition>|<nodes>|<start>|<name>
 #
 # <source> is "active" for a live queue entry (running or pending, from squeue)
-# or "done" for a recently finished job (from sacct accounting). The job NAME is
+# or "done" for a recently finished job (from sacct accounting). <start> is the
+# start time as Slurm prints it; for a pending job it is Slurm's estimate, or
+# N/A while the scheduler has none. The job NAME is
 # the LAST field on purpose: a Slurm job name may contain almost anything, so
 # keeping it last means a stray delimiter in it can never shift the other
 # columns (the caller splits with a bounded maxsplit). State can contain a space
@@ -34,7 +36,7 @@ fi
 # --- active jobs: running + pending, straight from the live queue ----------
 # The literal "active|" prefix plus a trailing "%j" (name) keep every column
 # positional. -h drops the header; -u <user> (not --me) works on older Slurm too.
-squeue -u "$user" -h -o "active|%i|%T|%M|%l|%P|%D|%j" 2>/dev/null
+squeue -u "$user" -h -o "active|%i|%T|%M|%l|%P|%D|%S|%j" 2>/dev/null
 
 # --- recently finished jobs: best-effort from accounting -------------------
 # A non-numeric / zero window means "active only" — skip accounting entirely.
@@ -60,13 +62,13 @@ fi
 # squeue already covered it, so skip. Keep only jobs that actually ended at or
 # after the window start.
 sacct -u "$user" -X -n -P -S "$since_iso" \
-      -o End,JobIDRaw,State,Elapsed,Timelimit,Partition,NNodes,JobName 2>/dev/null |
-while IFS='|' read -r end jobid state elapsed timelimit partition nodes name; do
+      -o End,JobIDRaw,State,Elapsed,Timelimit,Partition,NNodes,Start,JobName 2>/dev/null |
+while IFS='|' read -r end jobid state elapsed timelimit partition nodes start name; do
     [ -n "$jobid" ] || continue
     case "$end" in ''|Unknown|None) continue ;; esac
     end_epoch="$(date -d "$end" +%s 2>/dev/null)" || continue
     [ -n "$end_epoch" ] && [ "$end_epoch" -ge "$since_epoch" ] || continue
-    printf 'done|%s|%s|%s|%s|%s|%s|%s\n' \
-        "$jobid" "$state" "$elapsed" "$timelimit" "$partition" "$nodes" "$name"
+    printf 'done|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$jobid" "$state" "$elapsed" "$timelimit" "$partition" "$nodes" "$start" "$name"
 done
 exit 0

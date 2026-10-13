@@ -130,7 +130,7 @@ def test_jobs_json_attaches_records(tmp_path: Path, monkeypatch) -> None:
     from cluster_tunnel.jobs import Job
 
     _cfg(tmp_path, monkeypatch)
-    _patch_jobs(monkeypatch, jobs=[Job("active", "101", "RUNNING", "1:00", "2:00:00", "gpu", "1", "train")])
+    _patch_jobs(monkeypatch, jobs=[Job("active", "101", "RUNNING", "1:00", "2:00:00", "gpu", "1", "N/A", "train")])
     stored = [
         records.JobRecord.from_json('{"job_id": "101", "project": "htfm"}'),
         records.JobRecord.from_json('{"job_id": "99", "project": "htfm"}'),
