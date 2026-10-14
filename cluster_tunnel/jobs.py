@@ -24,6 +24,9 @@ SCRIPT_PATH = PACKAGE_DIR / "scripts" / "jobs.sh"
 #: a stray ``|`` without shifting the earlier columns.
 _N_FIELDS = 9
 
+#: The probe's line naming the Slurm ClusterName: ``cluster|<name>``.
+_CLUSTER_PREFIX = "cluster|"
+
 
 @dataclass
 class Job:
@@ -45,6 +48,23 @@ class Job:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class Overview:
+    """What the probe reports for one cluster."""
+
+    #: Slurm's ``ClusterName`` (what jobs see as ``SLURM_CLUSTER_NAME``); ``None`` if unknown.
+    slurm_cluster: str | None
+    jobs: list[Job]
+
+
+def parse_cluster_name(lines: list[str]) -> str | None:
+    """The ClusterName from the probe's ``cluster|<name>`` line, or ``None`` without one."""
+    for line in lines:
+        if line.startswith(_CLUSTER_PREFIX):
+            return line[len(_CLUSTER_PREFIX):].strip() or None
+    return None
 
 
 def parse_line(line: str) -> Job | None:
@@ -88,8 +108,8 @@ def _order(jobs: list[Job]) -> list[Job]:
     return active + done
 
 
-def query(spec: ConnSpec, user: str | None, since_minutes: int) -> list[Job]:
-    """Run the probe on ``spec``'s login node and return its jobs, ordered.
+def query(spec: ConnSpec, user: str | None, since_minutes: int) -> Overview:
+    """Run the probe on ``spec``'s login node and return the ClusterName and its jobs, ordered.
 
     ``user`` may be ``None`` (or empty) to let the script resolve it remotely via
     ``id -un``. ``since_minutes`` is the finished-job history window; ``0`` skips
@@ -100,5 +120,6 @@ def query(spec: ConnSpec, user: str | None, since_minutes: int) -> list[Job]:
     if res.returncode != 0:
         detail = (res.stderr or "").strip() or f"probe exited {res.returncode}"
         raise RuntimeError(detail)
-    jobs = [job for line in res.stdout.splitlines() if (job := parse_line(line))]
-    return _order(jobs)
+    lines = res.stdout.splitlines()
+    jobs = [job for line in lines if (job := parse_line(line))]
+    return Overview(parse_cluster_name(lines), _order(jobs))

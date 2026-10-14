@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ctun jobs --json` attaches each job's `record` and lists
   `records_without_job` per cluster. Turn it off per cluster with
   `job_records: false`.
+- `ctun jobs --json` names each cluster's Slurm `ClusterName` in
+  `slurm_cluster`, the value jobs see as `SLURM_CLUSTER_NAME`, so a front end
+  can match a job to tags like `slurm:<ClusterName>:<job id>`.
 - `ctun run --note` checks its `commit:<hash>` and `job:<id>` references before
   running and refuses with the new exit code 13 (`note_reference_invalid`).
 - `ctun login --credentials-stdin` reads the password, OTP and session limit as

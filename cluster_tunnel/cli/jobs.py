@@ -113,11 +113,12 @@ class JobsCommandsMixin:
         for name in names:
             cluster = config.clusters[name]
             spec = ssh.conn_spec(config, name)
-            entry = {"cluster": name, "live": ssh.is_live(spec), "error": None, "jobs": []}
+            entry = {"cluster": name, "slurm_cluster": None, "live": ssh.is_live(spec), "error": None, "jobs": []}
             if entry["live"]:
                 try:
-                    jobs = jobs_mod.query(spec, cluster.user, since_minutes)
-                    entry["jobs"] = [j.as_dict() for j in jobs]
+                    overview = jobs_mod.query(spec, cluster.user, since_minutes)
+                    entry["slurm_cluster"] = overview.slurm_cluster
+                    entry["jobs"] = [j.as_dict() for j in overview.jobs]
                 except Exception as exc:  # noqa: BLE001 — surface, don't abort the sweep
                     entry["error"] = str(exc)
             if as_json and entry["live"] and entry["error"] is None and cluster.job_records:

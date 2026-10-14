@@ -78,7 +78,9 @@ of a *single* job as it changes state, use `Monitor` (see
 [monitoring-jobs.md](monitoring-jobs.md)). Equivalent to
 `run -- squeue --me` + `run -- sacct`, but formatted and multi-cluster.
 
-With `--json`, each job carries its `record` (see [Job records](#job-records), or
+With `--json`, each cluster entry names its `slurm_cluster`: Slurm's own
+`ClusterName`, which jobs see as `SLURM_CLUSTER_NAME` (`null` when unknown or the
+tunnel is down). Each job carries its `record` (see [Job records](#job-records), or
 `null`), and each cluster entry lists `records_without_job`: records written in
 the window whose job is no longer listed. `records_error` reports a failure to
 read the records; the jobs are still listed.
