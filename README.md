@@ -161,8 +161,8 @@ clusters:
     host: horeka.scc.kit.edu
     user: ab1234
     requires_otp: true            # set false for clusters that don't use an OTP
-    description: |
-      HoreKa @ KIT. GPU jobs go to partition 'accelerated'.
+    description:                  # notes for the agent, shown by `ctun info`
+      - HoreKa @ KIT. GPU jobs go to partition 'accelerated'.
 ```
 
 > The starter config (`ctun config --init`) already ships several commented
@@ -229,7 +229,15 @@ $ ctun config -p|--path        # print the config file path
 $ ctun config -s|--show        # print the resolved config
 $ ctun config --validate       # check for errors + warn on missing budget
                                # scripts / invalid guard_commands regexes
+$ ctun config --migrate        # convert old-style entries to the current format:
+                               # shows the diff, asks first (-y/--yes: don't ask)
 ```
+
+Configs written for older `ctun` versions keep working as they are. `--migrate` is
+an optional upgrade you run yourself: it turns each single-string `description` into
+a list of notes (one per blank-line-separated paragraph), keeps the previous file as
+`config.yaml.bak`, and does nothing when there is nothing to convert. Older `ctun`
+versions (0.5.0 and earlier) can't read a migrated config.
 
 ### `login` — authenticate and open the tunnel
 
@@ -328,7 +336,21 @@ $ ctun -t horeka info [-j|--json]
 ```
 
 Prints the cluster's description, its (advisory) restrictions, and the current budget
-usage vs. limit. Works even without a live tunnel.
+usage vs. limit. Works even without a live tunnel. A description that is a list prints
+as bullet points; in `--json` output it stays a list (a string stays a string).
+
+### `note` — add a note to a cluster's description
+
+```console
+$ ctun -t horeka note "Pass -A hk-project-x to sbatch."
+```
+
+Appends the text to the cluster's `description` list in your config, with a
+`# added via ctun note, <date>` comment, so `ctun info` shows it from then on. Only
+those lines of the file change; your comments and layout stay as they are. Meant for
+an agent to record what it learned about a cluster — the skill makes it ask you for
+the exact text first. A description that is still a single string has to be
+converted with `ctun config --migrate` first.
 
 ### `logout` — close the tunnel
 
@@ -374,8 +396,9 @@ clusters:
     identity_file: ~/.ssh/horeka  # optional: SSH key to use
     control_persist: "24h"        # optional per-cluster override
 
-    description: |
-      HoreKa @ KIT. GPU jobs go to partition 'accelerated'.
+    description:                  # notes for the agent, shown by `ctun info` (or one string)
+      - HoreKa @ KIT. GPU jobs go to partition 'accelerated'.
+      - Node-local scratch is $TMPDIR; stage large inputs there.
 
     restrictions:                 # advisory only — shown by `ctun info`, never enforced
       max_job_runtime: "48:00:00"
@@ -451,6 +474,9 @@ BLOCKED on horeka: session budget exhausted: 503.2 >= 500.0 jobh. Command not su
   rather than anything proceeding unauthenticated.
 - **`ctun -t <cluster> info`** gives the agent a concise briefing — the cluster
   description, advisory restrictions, and remaining budget — to read before it starts.
+- **Notes grow with use.** When the agent learns something lasting about a cluster, it
+  proposes a note; once you approve the exact text, `ctun note` adds it to that
+  cluster's description, and every later session sees it in `info`.
 
 All agents must run `ctun` on the **same machine** where the tunnel was opened, since the
 control socket is local to that machine.
@@ -462,6 +488,7 @@ control socket is local to that machine.
 | Path | Purpose |
 |---|---|
 | `~/.config/cluster-tunnel/config.yaml` | Your configuration. |
+| `~/.config/cluster-tunnel/config.yaml.bak` | The config as it was before the last `ctun config --migrate`. |
 | `~/.config/cluster-tunnel/budget/<cluster>.sh` | Per-cluster budget scripts. |
 | `~/.cache/cluster-tunnel/sockets/<cluster>` | SSH control sockets (the live tunnels). |
 | `~/.cache/cluster-tunnel/sessions/<cluster>.json` | Internal session state (start time, limit). |

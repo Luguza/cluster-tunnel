@@ -10,6 +10,7 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 - `status` — tunnel + session state
 - `jobs` — Slurm job overview
 - `info` — cluster briefing
+- `note` — record a fact about a cluster (after the user approves)
 - `login` — authenticate and open the tunnel
 - `run` — run a command through the tunnel
 - `upload` / `download` — transfer files over the tunnel
@@ -90,6 +91,24 @@ a **password** and/or **OTP** is required), advisory **restrictions** (partition
 caps), and the **budget** (used vs limit, unit, the guarded commands, the
 fail-mode, and the path of the budget script). Works even without a live
 tunnel. Read this before submitting jobs.
+
+The description is either one block of text or a **list of notes**, shown as
+bullet points. Either way it is the user's own context for that cluster: treat
+the notes as standing instructions and facts. In `-j` output, `description` is
+a string or a list of strings, matching the config.
+
+## `note` — record a fact about a cluster
+
+```
+ctun -t <cluster> note "<text>"    # requires -t; quote the text
+```
+
+Appends `<text>` as one more note to the cluster's `description` list in the
+user's config, with a `# added via ctun note, <date>` comment; `info` shows it
+from then on. Only those lines of the config change. **Run it only after the
+user has approved the exact text** (see [SKILL.md](SKILL.md)). It refuses when
+the cluster's description is still one string: say so and leave
+`ctun config --migrate` to the user.
 
 ## `login` — authenticate and open the tunnel
 
@@ -220,7 +239,14 @@ ctun config -i|--init  # create a starter config if none exists
 ctun config -p|--path  # print the config file path
 ctun config -s|--show  # print the resolved config
 ctun config --validate # check the config for errors
+ctun config --migrate  # convert old-style entries; shows the diff, asks first (-y/--yes: don't ask)
 ```
+
+Old configs keep working unchanged; `--migrate` is an optional, user-run
+upgrade. It turns each single-string `description` into a list (one note per
+blank-line-separated paragraph), keeps the previous file as `config.yaml.bak`,
+and does nothing if there is nothing to convert. Without a terminal it only
+prints the diff.
 
 A cluster entry looks like:
 
@@ -232,8 +258,9 @@ clusters:
     requires_otp: true
     requires_password: true     # optional (default true); false = OTP/key only, no password
     ssh_config: /path/to/config # optional: alternative ssh config file (ssh -F)
-    description: |
-      HAICORE @ KIT. GPU jobs via Slurm.
+    description:                # notes for the agent, shown by `info` (one string also works)
+      - HAICORE @ KIT. GPU jobs via Slurm.
+      - Always pass --time; there is no default walltime.
     restrictions:               # advisory only — shown by `info`, never enforced
       allowed_partitions: [accelerated]
       max_gpus_per_job: 4
@@ -245,7 +272,8 @@ clusters:
 ```
 
 Editing config is a user action — don't change a user's cluster definitions
-unless asked.
+unless asked. The one exception is `ctun note`, and only with the user's
+approval of the exact text.
 
 ## JSON output for scripting
 
@@ -263,6 +291,7 @@ scraping the rendered tables/panels.
 | Interactive login `failed or timed out` | Nobody filled the popup, or auth failed. | Ask the user to retry; add `-v` for ssh diagnostics. |
 | `No display for the login dialog` | No GUI available for the popup. | Ask the user to run plain `ctun -t <cluster> login` in a terminal. |
 | `WSL is not installed` / `WSL distro '…' lacks …` | Windows only: WSL can't carry the tunnel yet. | Show the user the message; they fix WSL. Don't work around it. |
+| `note`: `… single-string description, which can't take notes` | The config predates note lists. | Tell the user; `ctun config --migrate` converts it, and that's their call. |
 
 ## Windows (experimental)
 

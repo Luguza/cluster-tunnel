@@ -36,6 +36,8 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
   **Standard library only**: on Windows its source is streamed to `python3 -I -`
   inside WSL, where `cluster_tunnel` isn't installed.
 - `config.py` — pydantic models + loading/validation of the YAML config.
+- `configedit.py` — changes to an existing config (`note`, `config --migrate`):
+  line-level edits verified by re-parsing; never re-serialises the file.
 - `session.py` — per-cluster session state (start time + budget limit), in the cache dir.
 - `budget.py` — session-scoped compute-budget guard (runs the cluster's budget
   script over the tunnel and compares usage against the session limit).
@@ -60,7 +62,7 @@ the Rich-formatted help. One file per command domain:
 - `jobs.py` — `jobs` (Slurm job overview; grouped under Tunnel)
 - `execution.py` — `run` (budget-guarded command execution)
 - `transfer.py` — `upload`, `download`
-- `context.py` — `info`, `logs` (the agent briefing)
+- `context.py` — `info`, `note`, `logs` (the agent briefing)
 - `configcmd.py` — `config`
 - `webui.py` — `webui` (placeholder)
 - `display.py` — logo/panel rendering; `assets/` holds the logo art
@@ -98,7 +100,9 @@ A cluster entry (see `config.example.yaml` and `skill/reference.md`):
 - `requires_otp` (default `false`) — advisory; shows/hides the OTP field in the popup
 - `requires_password` (default `true`) — set `false` for OTP-only / key-only
   clusters; hides the password field and requires a non-empty password when true
-- `description`, `restrictions` (advisory) — surfaced by `ctun info`
+- `description` — one string, or a list of notes that `ctun note` appends to;
+  surfaced by `ctun info`
+- `restrictions` (advisory) — surfaced by `ctun info`
 - `budget` — `script` + `session_limit` + `unit` + `guard_commands` + `fail_mode`
 
 Under `defaults`, `wsl_distro` picks the WSL distro on Windows. There,
@@ -148,6 +152,9 @@ Steps (example shows a **minor** release; use `patch` / `major` as appropriate):
 - Commit messages follow Conventional Commits (`feat(scope):`, `fix:`,
   `docs(scope):`, `chore(release):`, ...).
 - Keep changes tested; add or update tests under `tests/` alongside behavior changes.
+- Config format changes stay backward compatible: old configs must keep loading
+  and behaving as before. A structural upgrade goes in as a step in
+  `configedit._MIGRATIONS`, applied only when the user runs `ctun config --migrate`.
 - Pass `encoding="utf-8"` to every text file read/write and to
   `subprocess.run(..., text=True)`: Windows defaults to cp1252. CI enforces this
   via `[tool.pytest.ini_options]`; check locally with

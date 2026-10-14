@@ -8,8 +8,9 @@ description: >-
   the cluster login requires a one-time password (OTP). Covers checking tunnel
   status, logging in (including the interactive popup so a present human types
   the password/OTP), running commands through the live tunnel, the per-session
-  compute-budget guard, and HPC etiquette (never run compute on login nodes;
-  always go through Slurm).
+  compute-budget guard, saving lasting cluster notes (only with the user's
+  approval), and HPC etiquette (never run compute on login nodes; always go
+  through Slurm).
 allowed-tools: Bash(ctun *), Bash(uv run ctun *)
 ---
 
@@ -50,8 +51,10 @@ ctun status 2>/dev/null || uv run ctun status 2>/dev/null || echo "(ctun unavail
    session.** The first time you work with a given cluster, and before any
    `login` or `run` against it, run `ctun -t <cluster> info` and read it. This
    is how that cluster's specific context reaches you: it prints the cluster
-   **description**, advisory restrictions (partitions, max runtime, GPU caps),
-   and the compute budget (limit, unit, which commands are guarded). This is not
+   **description** (often a list of notes the user keeps for that cluster —
+   treat them as standing instructions), advisory restrictions (partitions,
+   max runtime, GPU caps), and the compute budget (limit, unit, which commands
+   are guarded). This is not
    optional and not just for job submission — do it even for read-only work like
    `squeue`, and even if the tunnel is already `live`. If you switch to a second
    cluster later in the session, run its `info` before touching it too.
@@ -101,6 +104,26 @@ patterns, and the budget guard explained.
   partitions, max runtime, max GPUs); they are not auto-enforced.
 - **Be a good tenant.** Request only what a job needs, set realistic `--time`
   limits, and prefer batch jobs over idle interactive allocations.
+- **Never save a note without the user's explicit yes** to its exact text (see
+  below).
+
+## Remembering what you learn: `ctun note`
+
+When you learn something about a cluster that would help in every later
+session (an account to pass with `-A`, a module to load before building, a
+filesystem quirk, a partition that misbehaves), propose saving it as a note:
+
+1. Show the user the exact note, as one short self-contained line, and ask
+   whether to save it. Don't save it until they say yes.
+2. After an explicit yes, run `ctun -t <cluster> note "<text>"`. It adds the
+   note to the cluster's description in the user's config, so `ctun info`
+   shows it from then on.
+
+Notes are for lasting, cluster-specific facts and the user's standing
+instructions. Never record secrets, job IDs or anything temporary, and never
+edit the config file yourself. If `note` refuses because the cluster's
+description is still a single string, tell the user that
+`ctun config --migrate` converts it; don't run that yourself unless they ask.
 
 ## Quick command recipes
 
@@ -115,6 +138,7 @@ ctun -t haicore run -n -- sbatch big.sh  # -n/--dry-run: show the budget decisio
 ctun -t haicore upload ./data $WORK/data # copy local -> cluster (rsync, no re-auth)
 ctun -t haicore download out/run.log .   # copy cluster -> local
 ctun -t haicore logs                     # commands sent to this cluster this session
+ctun -t haicore note "Use -A hk-proj."   # save a note, ONLY after the user approved it
 ctun -t haicore logout                   # close the tunnel, clear the session
 ```
 

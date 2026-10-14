@@ -29,8 +29,9 @@ clusters:
   #   ssh_alias: horeka              # optional: reuse a ~/.ssh/config Host block
   #   requires_otp: true             # advisory: surfaced via `ctun info`
   #   control_persist: "24h"
-  #   description: |
-  #     HoreKa @ KIT (NHR). GPU jobs -> partition 'accelerated'.
+  #   description:                   # notes for the agent, shown by `ctun info` (one string
+  #     - HoreKa @ KIT (NHR). GPU jobs -> partition 'accelerated'.   # also works, but only a
+  #     - Never run compute on the login node.                       # list takes `ctun note`)
   #   restrictions:                  # advisory only; surfaced via `ctun info`
   #     max_job_runtime: "48:00:00"
   #     allowed_partitions: [accelerated, cpuonly]
@@ -104,8 +105,8 @@ clusters:
   #   host: uc3.scc.kit.edu
   #   user: ka_ab1234                # KIT users: 'ka_' prefix + local username
   #   requires_otp: true             # 2FA: service password + OTP
-  #   description: |
-  #     bwUniCluster 3.0 (uc3) @ KIT/bwHPC — general-purpose state cluster.
+  #   description:
+  #     - bwUniCluster 3.0 (uc3) @ KIT/bwHPC — general-purpose state cluster.
   #   budget:                        # omit / leave session_limit unset to run unguarded
   #     script: budget/bwuni3.sh     # bundled; job wall-clock hours since session start
   #     session_limit: 200           # max job-hours per session (or pass `ctun login -l N`)

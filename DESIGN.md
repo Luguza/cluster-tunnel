@@ -132,7 +132,8 @@ need a cluster (`config`, top-level `status`) ignore it.
 | | `logout` | `ssh -O exit`; clears the session cache for that cluster. | |
 | **Execution** | `run` | Run a command through the tunnel, budget-guarded. **`--`-only** syntax. | `--tty`, `--dry-run` |
 | **Context** | `info` | Agent briefing: `description` + advisory `restrictions` + budget state. Works with no live tunnel. | `--json` |
-| **Config** | `config` | Open `config.yaml` in `$EDITOR` (default action). | `--show`, `--path`, `--validate`, `--init` |
+| | `note` | Append one note to the cluster's `description` list in `config.yaml` (§6.1). Agent use only after the user approved the text. | |
+| **Config** | `config` | Open `config.yaml` in `$EDITOR` (default action). | `--show`, `--path`, `--validate`, `--init`, `--migrate [--yes]` |
 | **Interface** | `webui` | *(future)* launch local Flask + JS app. | `--host`, `--port`, `--no-browser` |
 
 Notes:
@@ -285,15 +286,15 @@ clusters:
     ssh_alias: horeka               # optional: reuse a ~/.ssh/config Host block instead
     identity_file: ~/.ssh/horeka    # optional
     control_persist: "24h"          # optional per-cluster override
-    description: |
-      HoreKa @ KIT (NHR). GPU jobs -> partition 'accelerated' (4xA100/H100 per node).
-      Batch via sbatch; large interactive srun discouraged. Node-local scratch: $TMPDIR.
+    description:                    # a list of notes (§6.1); surfaced via `info`
+      - HoreKa @ KIT (NHR). GPU jobs -> partition 'accelerated' (4xA100/H100 per node).
+      - Batch via sbatch; large interactive srun discouraged. Node-local scratch: $TMPDIR.
+      - Never run compute on the login node.
     restrictions:                   # ADVISORY only — surfaced via `info`, never enforced
       max_job_runtime: "48:00:00"
       max_gpus_per_job: 4
       max_concurrent_jobs: 8
       allowed_partitions: [accelerated, cpuonly]
-      notes: "Never run compute on the login node."
     budget:                         # omit this block -> cluster runs unguarded
       script: budget/horeka.sh      # remote script (default: budget/<cluster>.sh)
       session_limit: 500            # default if `login --limit` not given; omit -> unguarded
@@ -303,7 +304,7 @@ clusters:
 
   bwuni:
     ssh_alias: bwuni                # already in ~/.ssh/config (uc2.scc.kit.edu, user ab1234)
-    description: "bwUniCluster 2.0 @ KIT. GPU partitions gpu_h100 / gpu_a100."
+    description: "bwUniCluster 2.0 @ KIT. GPU partitions gpu_h100 / gpu_a100."  # one string: the original form
     # no budget block -> no core-hour budget; tunnel+run unguarded
 
 webui:                              # future `ctun webui`
@@ -320,6 +321,39 @@ Resolution rules:
 - Single-quoted YAML scalars keep backslashes literal — relevant if a script path or
   value ever needs them.
 
+### 6.1 Descriptions, notes, and config migration
+
+A cluster's `description` is either one string (the original form) or a **list of
+notes**. `info` prints a list as bullet points; `info --json` emits whichever form the
+config uses, so existing consumers of the string form keep working.
+
+**`ctun note`** lets an agent grow that list. Approval is a rule in the skill, not a
+mechanism: the agent shows the user the exact text and runs `note` only after a yes.
+ctun can't verify that (a popup like `login --interactive` could), which was accepted
+to keep the flow in the conversation and working without a display.
+
+`note` and `config --migrate` are the only commands that change an existing
+`config.yaml`, a hand-edited, commented file, so neither re-serialises it. They replace or insert only
+the lines of one `description` value, at the positions PyYAML's composer reports
+(end marks of block nodes run on over trailing blank lines and comments, so the
+content's real end is computed). A YAML round-tripper (ruamel.yaml) was rejected: it
+attaches each comment to the node before it, so restructuring a value moves the next
+cluster's header comment, and its global indent settings reformat untouched lines.
+Before writing, the edited text is parsed again and must equal the old data with
+exactly the intended change applied, and still validate; otherwise nothing is
+written. Writes are atomic (temp file + `os.replace`), follow a symlinked config,
+and keep the file mode and its line endings.
+
+**Backward compatibility.** Old configs load and behave as before; nothing rewrites
+them unasked. `config --migrate` is the explicit, opt-in upgrade: an ordered list of
+migration steps (today one: string description → list, one item per
+blank-line-separated paragraph, never cutting a sentence or table apart). It shows a
+diff, asks before writing (`--yes` skips the question; without a terminal it only
+previews), keeps `config.yaml.bak`, and is a no-op once current. `note` refuses a
+string description instead of converting it, so the format changes only when the
+user runs the migration. A migrated config can't be read by ctun 0.5.0 and older,
+which is one more reason it is opt-in.
+
 ---
 
 ## 7. On-disk layout
@@ -327,6 +361,7 @@ Resolution rules:
 ```
 ~/.config/cluster-tunnel/
 ├── config.yaml
+├── config.yaml.bak            # the config before the last `config --migrate`
 └── budget/
     ├── horeka.sh
     ├── juwels.sh
@@ -355,10 +390,11 @@ cluster-tunnel/
     │   ├── constants.py              # default paths, guard defaults, terminal order
     │   ├── tunnel.py                 # TunnelCommandsMixin   -> login, status, logout
     │   ├── execution.py              # ExecutionCommandsMixin-> run
-    │   ├── context.py                # ContextCommandsMixin  -> info
+    │   ├── context.py                # ContextCommandsMixin  -> info, note, logs
     │   ├── configcmd.py              # ConfigCommandsMixin   -> config
     │   └── webui.py                  # WebuiCommandsMixin (placeholder)
     ├── config.py                     # YAML load + validate; Config/Cluster dataclasses
+    ├── configedit.py                 # line-level config edits: `note`, `config --migrate`
     ├── ssh.py                        # ControlMaster wrapper: open_master/run/check/exit
     ├── session.py                    # session-cache read/write
     ├── budget.py                     # remote script runner + threshold decision
@@ -392,6 +428,9 @@ Dependencies: `rich-click`, `rich`, `PyYAML`. (`python-dotenv` optional.)
 | Budget enforcement | threshold hard block when `used ≥ limit`; fail closed on probe error |
 | Limit source | `login --limit`, else config `session_limit`, else unguarded |
 | Restrictions | advisory only (surfaced via `info`), never enforced |
+| Cluster notes | `description` may be a list; agent appends via `note` after the user's yes in chat |
+| Config format changes | old configs keep working; opt-in `config --migrate` (diff, confirm, `.bak`) |
+| Config writes | line-level splices verified by re-parsing; never a re-serialisation |
 | Config | per-user YAML `~/.config/cluster-tunnel/config.yaml` |
 | Cache | internal-only session state; no general KV store |
 | Stack | Python + rich-click (mixin layout), uv |

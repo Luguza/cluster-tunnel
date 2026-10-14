@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from cluster_tunnel.config import Cluster
 
 def _write(tmp_path: Path, text: str) -> Path:
     p = tmp_path / "config.yaml"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
     return p
 
 
@@ -35,6 +36,38 @@ def test_requires_password_defaults_true_and_overridable() -> None:
     # Default: a cluster uses a service password unless told otherwise.
     assert Cluster(host="h").requires_password is True
     assert Cluster(host="h", requires_password=False).requires_password is False
+
+
+def test_description_is_a_string_or_a_list(tmp_path: Path) -> None:
+    p = _write(
+        tmp_path,
+        "clusters:\n"
+        "  old:\n    host: h\n    description: |\n      One string.\n"
+        "  new:\n    host: h\n    description:\n      - first\n      - second\n"
+        "  none:\n    host: h\n",
+    )
+    clusters = cfg.load_config(str(p)).clusters
+    assert clusters["old"].description == "One string.\n"
+    assert clusters["new"].description == ["first", "second"]
+    assert clusters["none"].description == ""
+
+
+@pytest.mark.parametrize(
+    "item, kind",
+    [
+        ("Account: hk-x", "a 'key: value' mapping"),  # the most likely slip
+        ("[a, b]", "a nested list"),
+        ("yes", "a true/false value"),
+        ("42", "a number"),
+        ("1.5", "a number"),
+        ("", "empty"),
+        ("2026-10-14", "a date"),
+    ],
+)
+def test_description_items_must_be_text(tmp_path: Path, item: str, kind: str) -> None:
+    p = _write(tmp_path, f"clusters:\n  c:\n    host: h\n    description:\n      - ok\n      - {item}\n")
+    with pytest.raises(Exception, match=re.escape(f"description item 2 is {kind}, not text")):
+        cfg.load_config(str(p))
 
 
 def test_budget_script_path(tmp_path: Path) -> None:

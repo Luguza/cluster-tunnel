@@ -188,6 +188,161 @@ def test_validate_warns_on_bad_guard_regex(tmp_path: Path, monkeypatch) -> None:
     assert "not a valid regex" in _norm(r)
 
 
+# --- descriptions, notes and migration ------------------------------------------
+
+_NOTES = (
+    "clusters:\n"
+    "  old:\n    host: old.example\n    description: |\n      One string.\n"
+    "  new:\n    host: new.example\n    description:\n"
+    "      - First fact.\n      - '  '\n      - Second fact.\n"
+)
+
+
+def _notes_cfg(tmp_path: Path, monkeypatch) -> Path:
+    p = tmp_path / "config.yaml"
+    p.write_text(_NOTES, encoding="utf-8")
+    monkeypatch.setenv("CTUN_CONFIG", str(p))
+    return p
+
+
+def test_info_shows_a_description_list_as_bullets(tmp_path: Path, monkeypatch) -> None:
+    _notes_cfg(tmp_path, monkeypatch)
+    new = CliRunner().invoke(cli, ["-t", "new", "info"])
+    assert new.exit_code == 0
+    assert "• First fact." in _norm(new) and "• Second fact." in _norm(new)
+    old = CliRunner().invoke(cli, ["-t", "old", "info"])
+    assert "One string." in _norm(old) and "•" not in _norm(old)
+
+
+def test_info_json_keeps_the_description_form(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    _notes_cfg(tmp_path, monkeypatch)
+    old = json.loads(CliRunner().invoke(cli, ["-t", "old", "info", "-j"]).output)
+    new = json.loads(CliRunner().invoke(cli, ["-t", "new", "info", "-j"]).output)
+    assert old["description"] == "One string."  # a string stays a string
+    assert new["description"] == ["First fact.", "Second fact."]  # blank notes dropped
+
+
+def test_note_appends_and_info_shows_it(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    p = _notes_cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["-t", "new", "note", "Use -A hk-test for sbatch."])
+    assert r.exit_code == 0, r.output
+    assert "Note added to new (3 notes)" in _norm(r)
+    assert "# added via ctun note, " in p.read_text(encoding="utf-8")
+    data = json.loads(CliRunner().invoke(cli, ["-t", "new", "info", "-j"]).output)
+    assert data["description"][-1] == "Use -A hk-test for sbatch."
+
+
+def test_note_on_a_single_string_description_points_to_migrate(tmp_path: Path, monkeypatch) -> None:
+    p = _notes_cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["-t", "old", "note", "fact"])
+    assert r.exit_code != 0
+    assert "ctun config --migrate" in _norm(r)
+    assert p.read_text(encoding="utf-8") == _NOTES
+
+
+def test_note_uses_an_alternate_config_path(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("CTUN_CONFIG", raising=False)
+    p = tmp_path / "other.yaml"
+    p.write_text("clusters:\n  a:\n    host: h\n", encoding="utf-8")
+    r = CliRunner().invoke(cli, ["-c", str(p), "-t", "a", "note", "fact"])
+    assert r.exit_code == 0, r.output
+    assert "    description:\n      - fact  # added via ctun note, " in p.read_text(encoding="utf-8")
+
+
+def test_note_rejects_empty_text_and_unknown_clusters(tmp_path: Path, monkeypatch) -> None:
+    p = _notes_cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["-t", "new", "note", "   "])
+    assert r.exit_code != 0 and "the note is empty" in _norm(r)
+    r = CliRunner().invoke(cli, ["-t", "nope", "note", "fact"])
+    assert r.exit_code != 0 and "Unknown cluster" in _norm(r)
+    assert p.read_text(encoding="utf-8") == _NOTES
+
+
+def test_show_prints_a_description_list(tmp_path: Path, monkeypatch) -> None:
+    import yaml
+
+    _notes_cfg(tmp_path, monkeypatch)
+    shown = yaml.safe_load(CliRunner().invoke(cli, ["config", "--show"]).output)
+    assert shown["clusters"]["new"]["description"] == ["First fact.", "  ", "Second fact."]
+    assert shown["clusters"]["old"]["description"] == "One string.\n"
+
+
+def test_migrate_needs_a_valid_config(tmp_path: Path, monkeypatch) -> None:
+    bad = "clusters:\n  c:\n    description: no host\n"
+    p = tmp_path / "config.yaml"
+    p.write_text(bad, encoding="utf-8")
+    monkeypatch.setenv("CTUN_CONFIG", str(p))
+    r = CliRunner().invoke(cli, ["config", "--migrate", "--yes"])
+    assert r.exit_code != 0 and "Invalid config" in _norm(r)
+    assert p.read_text(encoding="utf-8") == bad
+
+
+def test_migrate_without_a_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CTUN_CONFIG", str(tmp_path / "missing.yaml"))
+    r = CliRunner().invoke(cli, ["config", "--migrate"])
+    assert r.exit_code != 0 and "No config at" in _norm(r)
+
+
+def test_note_requires_a_target(tmp_path: Path, monkeypatch) -> None:
+    _notes_cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["note", "fact"])
+    assert r.exit_code != 0
+    assert "No cluster selected" in _norm(r)
+
+
+def test_migrate_without_a_terminal_only_previews(tmp_path: Path, monkeypatch) -> None:
+    p = _notes_cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["config", "--migrate"])
+    assert r.exit_code == 0
+    assert "old: description string -> 1 item" in _norm(r)
+    assert "-    description: |" in r.output
+    assert "Nothing written" in _norm(r)
+    assert p.read_text(encoding="utf-8") == _NOTES
+    assert not (tmp_path / "config.yaml.bak").exists()
+
+
+def test_migrate_on_a_terminal_asks_first(tmp_path: Path, monkeypatch) -> None:
+    from cluster_tunnel.cli import configcmd
+
+    p = _notes_cfg(tmp_path, monkeypatch)
+    monkeypatch.setattr(configcmd, "_stdin_is_tty", lambda: True)
+    r = CliRunner().invoke(cli, ["config", "--migrate"], input="n\n")
+    assert r.exit_code == 0 and "Nothing written" in _norm(r)
+    assert p.read_text(encoding="utf-8") == _NOTES
+    r = CliRunner().invoke(cli, ["config", "--migrate"], input="y\n")
+    assert r.exit_code == 0 and "Migrated" in _norm(r)
+    assert "    description:\n      - One string.\n" in p.read_text(encoding="utf-8")
+
+
+def test_migrate_yes_keeps_a_backup_and_is_idempotent(tmp_path: Path, monkeypatch) -> None:
+    p = _notes_cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["config", "--migrate", "--yes"])
+    assert r.exit_code == 0
+    assert (tmp_path / "config.yaml.bak").read_text(encoding="utf-8") == _NOTES
+    assert "    description:\n      - One string.\n" in p.read_text(encoding="utf-8")
+    r = CliRunner().invoke(cli, ["config", "--migrate", "--yes"])
+    assert r.exit_code == 0 and "Nothing to migrate" in _norm(r)
+
+
+def test_yes_needs_migrate(tmp_path: Path, monkeypatch) -> None:
+    _notes_cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["config", "--yes"])
+    assert r.exit_code != 0
+    assert "--yes only applies to --migrate" in _norm(r)
+
+
+def test_validate_mentions_the_optional_migration(tmp_path: Path, monkeypatch) -> None:
+    _notes_cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["config", "--validate"])
+    assert r.exit_code == 0
+    assert "tip: old has a single-string description" in _norm(r)
+    assert "is valid" in _norm(r)
+
+
 # --- shell completion ----------------------------------------------------------
 
 

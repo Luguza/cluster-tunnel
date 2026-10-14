@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 import re
 import shutil
 from pathlib import Path, PureWindowsPath
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cluster_tunnel import constants, paths, wsl
 
@@ -52,6 +53,19 @@ class Budget(BaseModel):
         return self
 
 
+# How YAML read a value that should have been text, for error messages.
+_YAML_KINDS = {
+    dict: "a 'key: value' mapping",
+    list: "a nested list",
+    bool: "a true/false value",
+    int: "a number",
+    float: "a number",
+    type(None): "empty",
+    datetime.date: "a date",
+    datetime.datetime: "a date",
+}
+
+
 class Cluster(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -65,9 +79,25 @@ class Cluster(BaseModel):
     control_persist: Optional[str] = None
     server_alive_interval: Optional[int] = None
     server_alive_count_max: Optional[int] = None
-    description: str = ""
+    # A string (the original form) or a list of notes; `ctun note` appends to a
+    # list, and `ctun config --migrate` turns a string into one.
+    description: Union[str, list[str]] = ""
     restrictions: dict[str, Any] = Field(default_factory=dict)
     budget: Optional[Budget] = None
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _check_description(cls, value: Any) -> Any:
+        # An unquoted list item that YAML reads as something other than text is
+        # an easy slip ("- Account: x" is a mapping, "- yes" a bool): name it.
+        if isinstance(value, list):
+            for number, item in enumerate(value, 1):
+                if not isinstance(item, str):
+                    kind = _YAML_KINDS.get(type(item), type(item).__name__)
+                    raise ValueError(
+                        f"description item {number} is {kind}, not text; write it in quotes"
+                    )
+        return value
 
     @model_validator(mode="after")
     def _check(self) -> "Cluster":

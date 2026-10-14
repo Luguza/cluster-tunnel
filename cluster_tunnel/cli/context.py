@@ -1,4 +1,4 @@
-"""Agent-facing context command: info."""
+"""Agent-facing context commands: info, note, logs."""
 
 from __future__ import annotations
 
@@ -8,11 +8,57 @@ from typing import Any
 import rich_click as click
 from rich.console import Group
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 
+def _description_data(description: str | list[str]) -> str | list[str]:
+    """A description as the agent sees it: text stripped, empty notes dropped."""
+    if isinstance(description, list):
+        return [item.strip() for item in description if item.strip()]
+    return description.strip()
+
+
 class ContextCommandsMixin:
-    """Mixin providing the `info` and `logs` commands."""
+    """Mixin providing the `info`, `note` and `logs` commands."""
+
+    @click.command("note")
+    @click.pass_obj
+    @click.argument("text")
+    def note_command(self, text: str) -> None:
+        """Add a note to a cluster's description (requires -t <cluster>).
+
+        Appends TEXT as one more item of the cluster's `description` list in
+        config.yaml, so `ctun info` briefs every later session with it. A coding
+        agent runs this only after the user approved the exact text. Only the
+        lines of that description change; the rest of the file, comments
+        included, stays as it is.
+
+        A description that is still a single string has to be converted first,
+        with `ctun config --migrate`.
+        """
+        from rich.markup import escape
+
+        from cluster_tunnel import config as config_mod
+        from cluster_tunnel import configedit
+
+        config = self.load_config()
+        name, _ = self.resolve_cluster(config)
+        path = config_mod.resolve_config_path(self.config_path)
+        try:
+            count = configedit.add_note(path, name, text)
+        except configedit.OldFormatError as exc:
+            raise click.ClickException(
+                f"{exc}. Convert it to a list with `ctun config --migrate` (it shows "
+                "the change and asks first), then add the note again."
+            ) from exc
+        except configedit.EditError as exc:
+            raise click.ClickException(f"Could not add the note: {exc}.") from exc
+        notes = f"{count} note{'s' if count != 1 else ''}"
+        self.cons.print(
+            f"[green]✓[/green] Note added to [cyan]{escape(name)}[/cyan] ({notes}); "
+            f"`ctun -t {escape(name)} info` shows it."
+        )
 
     @click.command("logs")
     @click.pass_obj
@@ -53,7 +99,7 @@ class ContextCommandsMixin:
     @click.pass_obj
     @click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
     def info_command(self, as_json: bool) -> None:
-        """Print the agent briefing: description, restrictions, and budget.
+        """Print the agent briefing: description or notes, restrictions, and budget.
 
         With a target (`-t <cluster>`), shows that cluster. Without one, shows
         every configured cluster.
@@ -162,7 +208,7 @@ class ContextCommandsMixin:
         cluster = b["cluster"]
         return {
             "cluster": b["name"],
-            "description": cluster.description.strip(),
+            "description": _description_data(cluster.description),
             "host": b["host"],
             "ssh_alias": b["ssh_alias"],
             "user": b["user"],
@@ -189,8 +235,17 @@ class ContextCommandsMixin:
         cluster = b["cluster"]
         body: list[Any] = []
 
-        if cluster.description.strip():
-            body.append(Text(cluster.description.strip()))
+        description = _description_data(cluster.description)
+        if isinstance(description, list) and description:
+            notes = Table.grid(padding=(0, 1))
+            notes.add_column(no_wrap=True)
+            notes.add_column()
+            for item in description:
+                notes.add_row("•", Text(item))
+            body.append(notes)
+            body.append("")
+        elif description:
+            body.append(Text(description))
             body.append("")
 
         body.append(Text("Connection", style="bold"))

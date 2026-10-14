@@ -41,7 +41,7 @@ class CLI(
         {"name": "Tunnel", "commands": ["login", "status", "jobs", "logout"]},
         {"name": "Execution", "commands": ["run"]},
         {"name": "Transfer", "commands": ["upload", "download"]},
-        {"name": "Miscellaneous", "commands": ["info", "logs", "config", "webui"]},
+        {"name": "Miscellaneous", "commands": ["info", "note", "logs", "config", "webui"]},
     ]
 
     def __init__(self, *args, **kwargs):
@@ -54,6 +54,7 @@ class CLI(
         self.add_command(self.upload_command)
         self.add_command(self.download_command)
         self.add_command(self.info_command)
+        self.add_command(self.note_command)
         self.add_command(self.logs_command)
         self.add_command(self.config_command)
         self.add_command(self.webui_command)
