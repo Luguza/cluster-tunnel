@@ -8,6 +8,7 @@ exactly as before, nothing may rewrite them unasked, and the opt-in
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -101,6 +102,17 @@ def _invoke(*args: str, input: str | None = None):
     return CliRunner().invoke(cli, list(args), input=input)
 
 
+def _lines(output: str) -> list[str]:
+    """Output lines without colors or panel borders (CI colors rich-click panels)."""
+    text = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    return [line.strip("│ ").rstrip() for line in text.splitlines()]
+
+
+def _plain(output: str) -> str:
+    """Output as one line of words, for phrases rich may have wrapped."""
+    return " ".join(re.sub(r"[╭╮╰╯─]", " ", " ".join(_lines(output))).split())
+
+
 def _raw_descriptions(text: str) -> dict[str, object]:
     """Each cluster's description exactly as YAML reads it ("" when absent)."""
     clusters = yaml.safe_load(text)["clusters"]
@@ -135,7 +147,7 @@ def test_legacy_info_json_is_shaped_as_in_0_5_0(legacy: Path) -> None:
 def test_legacy_info_text_shows_the_description_as_a_paragraph(legacy: Path) -> None:
     r = _invoke("-t", "kcist", "info")
     assert r.exit_code == 0
-    lines = [line.strip("│ ").rstrip() for line in r.output.splitlines()]
+    lines = _lines(r.output)
     assert "KCIST @ KIT — 18 GPU nodes total." in lines
     assert "small   13× node-s   64 CPU   4× RTX 4090" in lines  # rows keep their spacing
     assert "•" not in r.output
@@ -145,7 +157,7 @@ def test_legacy_validate_passes_with_an_optional_tip(legacy: Path) -> None:
     r = _invoke("config", "--validate")
     assert r.exit_code == 0, r.output
     assert "warning" not in r.output
-    assert "tip: horeka, kcist, bwuni have a single-string description" in " ".join(r.output.split())
+    assert "tip: horeka, kcist, bwuni have a single-string description" in _plain(r.output)
     assert "is valid" in r.output
 
 
@@ -170,7 +182,7 @@ def test_nothing_rewrites_a_legacy_config_unasked(legacy: Path) -> None:
 def test_note_refuses_a_legacy_description_and_names_the_fix(legacy: Path) -> None:
     r = _invoke("-t", "kcist", "note", "Use -A hk-test.")
     assert r.exit_code != 0
-    assert "ctun config --migrate" in " ".join(r.output.split())
+    assert "ctun config --migrate" in _plain(r.output)
     assert legacy.read_text(encoding="utf-8") == LEGACY
 
 

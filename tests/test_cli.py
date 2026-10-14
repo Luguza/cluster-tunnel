@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -12,8 +13,13 @@ from cluster_tunnel.constants import ExitCode
 
 
 def _norm(result) -> str:
-    """Collapse rich's line-wrapping so substring asserts are robust."""
-    return " ".join(result.output.split())
+    """Collapse rich's line-wrapping so substring asserts are robust.
+
+    Also drops colors and panel borders: on CI (GITHUB_ACTIONS), rich-click
+    colors its error panels and highlights option-like words such as `--yes`.
+    """
+    text = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", text).split())
 
 
 def _cfg(tmp_path: Path, monkeypatch) -> Path:
