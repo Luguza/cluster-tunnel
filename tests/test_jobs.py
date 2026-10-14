@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cluster_tunnel.jobs import Job, _order, parse_line
+from cluster_tunnel.jobs import Job, _order, parse_cluster_name, parse_line
 
 
 def test_parse_line_basic() -> None:
@@ -59,3 +59,9 @@ def test_order_dedupes_active_over_finished() -> None:
     ordered = _order([j for j in jobs if j])
     assert len(ordered) == 1
     assert ordered[0].active is True
+
+
+def test_parse_cluster_name() -> None:
+    lines = ["cluster|haic", "active|1|RUNNING|0:01|1:00|gpu|1|N/A|train"]
+    assert parse_cluster_name(lines) == "haic"
+    assert parse_cluster_name(lines[1:]) is None

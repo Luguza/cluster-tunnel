@@ -126,11 +126,14 @@ class ClusterJobs:
     live: bool
     error: Optional[str] = None
     jobs: list[Job] = field(default_factory=list)
+    #: Slurm's ``ClusterName``, which jobs see as ``SLURM_CLUSTER_NAME``; ``None`` if unknown.
+    slurm_cluster: Optional[str] = None
 
     def as_dict(self) -> dict:
         """The entry as ``ctun jobs --json`` prints it."""
         return {
             "cluster": self.cluster,
+            "slurm_cluster": self.slurm_cluster,
             "live": self.live,
             "error": self.error,
             "jobs": [job.as_dict() for job in self.jobs],
@@ -683,7 +686,9 @@ def jobs(
         item = ClusterJobs(name, ssh.is_live(spec))
         if item.live:
             try:
-                item.jobs = jobs_mod.query(spec, entry.user, since_minutes)
+                overview = jobs_mod.query(spec, entry.user, since_minutes)
+                item.slurm_cluster = overview.slurm_cluster
+                item.jobs = overview.jobs
             except Exception as exc:  # noqa: BLE001 — surface, don't abort the sweep
                 item.error = str(exc)
         results.append(item)

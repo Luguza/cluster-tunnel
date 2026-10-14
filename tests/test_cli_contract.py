@@ -484,7 +484,7 @@ def test_logout_closes_the_master_and_clears_the_state(tmp_path: Path, monkeypat
 
 
 def test_jobs_sweep_queries_only_live_clusters(tmp_path: Path, monkeypatch) -> None:
-    from cluster_tunnel.jobs import Job
+    from cluster_tunnel.jobs import Job, Overview
 
     _config(
         tmp_path, monkeypatch,
@@ -495,7 +495,7 @@ def test_jobs_sweep_queries_only_live_clusters(tmp_path: Path, monkeypatch) -> N
 
     def fake_query(spec, user, since_minutes):
         queries.append((spec.name, user, since_minutes))
-        return [Job("active", "1", "RUNNING", "0:01", "1:00", "cpu", "1", "N/A", "a.sh")]
+        return Overview("haic", [Job("active", "1", "RUNNING", "0:01", "1:00", "cpu", "1", "N/A", "a.sh")])
 
     monkeypatch.setattr("cluster_tunnel.jobs.query", fake_query)
     r = _invoke("jobs", "--since", "0", "--json")

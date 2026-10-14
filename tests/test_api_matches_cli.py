@@ -19,7 +19,7 @@ from click.testing import CliRunner
 from cluster_tunnel import api, cmdlog, paths, popup, session, ssh
 from cluster_tunnel.budget import Decision
 from cluster_tunnel.cli import cli
-from cluster_tunnel.jobs import Job
+from cluster_tunnel.jobs import Job, Overview
 
 from tests.test_cli import _norm
 
@@ -160,7 +160,7 @@ def test_jobs(monkeypatch, since: str, minutes: int, error: Optional[str]) -> No
         queries.append((spec.name, user, since_minutes))
         if error:
             raise RuntimeError(error)
-        return [Job("active", "7", "PENDING", "0:00", "2:00:00", "cpu", "1", "N/A", "j.sh")]
+        return Overview("haic", [Job("active", "7", "PENDING", "0:00", "2:00:00", "cpu", "1", "N/A", "j.sh")])
 
     monkeypatch.setattr("cluster_tunnel.jobs.query", fake_query)
     r = _cli("jobs", "--since", since, "--json")

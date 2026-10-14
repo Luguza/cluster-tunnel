@@ -79,6 +79,10 @@ of a *single* job as it changes state, use `Monitor` (see
 [monitoring-jobs.md](monitoring-jobs.md)). Equivalent to
 `run -- squeue --me` + `run -- sacct`, but formatted and multi-cluster.
 
+With `--json`, each cluster entry names its `slurm_cluster`: Slurm's own
+`ClusterName`, which jobs see as `SLURM_CLUSTER_NAME` (`null` when unknown or the
+tunnel is down).
+
 ## `info` — cluster briefing
 
 ```

@@ -40,10 +40,14 @@ _FAKE_SACCT = (
 )
 
 
+# Fake scontrol: the one line of `scontrol show config` the probe reads.
+_FAKE_SCONTROL = "#!/bin/sh\nprintf 'ClusterName             = haic\\n'\n"
+
+
 def _bin(tmp_path: Path) -> Path:
     binp = tmp_path / "bin"
     binp.mkdir(exist_ok=True)
-    for name, body in (("squeue", _FAKE_SQUEUE), ("sacct", _FAKE_SACCT)):
+    for name, body in (("squeue", _FAKE_SQUEUE), ("sacct", _FAKE_SACCT), ("scontrol", _FAKE_SCONTROL)):
         f = binp / name
         f.write_text(body, encoding="utf-8", newline="\n")  # no CRLF on Windows
         f.chmod(0o755)
@@ -65,6 +69,11 @@ def test_active_jobs_always_listed(tmp_path: Path, bash: str) -> None:
     out = _run(tmp_path, "60", bash)
     assert "active|966737|RUNNING|14:44|7:00:00|booster|1|2026-10-13T14:02:11|train job" in out
     assert "active|966738|PENDING|0:00|7:00:00|booster|1|2026-10-14T09:30:00|eval" in out
+
+
+def test_names_the_slurm_cluster_first(tmp_path: Path, bash: str) -> None:
+    out = _run(tmp_path, "0", bash)
+    assert out.splitlines()[0] == "cluster|haic"
 
 
 def test_finished_window_filters_by_end(tmp_path: Path, bash: str) -> None:

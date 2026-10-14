@@ -4,6 +4,10 @@
 #
 #   <source>|<jobid>|<state>|<elapsed>|<timelimit>|<partition>|<nodes>|<start>|<name>
 #
+# Before the jobs comes one line `cluster|<ClusterName>`: Slurm's own name for
+# the cluster, the same value jobs see as SLURM_CLUSTER_NAME. It is left out
+# when `scontrol` cannot tell.
+#
 # <source> is "active" for a live queue entry (running or pending, from squeue)
 # or "done" for a recently finished job (from sacct accounting). <start> is the
 # start time as Slurm prints it; for a pending job it is Slurm's estimate, or
@@ -32,6 +36,9 @@ if ! command -v squeue >/dev/null 2>&1; then
     echo "squeue not found on this host (not a Slurm login node?)" >&2
     exit 3
 fi
+
+cluster="$(scontrol show config 2>/dev/null | sed -n 's/^ClusterName *= *//p' | head -n 1)"
+[ -n "$cluster" ] && echo "cluster|$cluster"
 
 # --- active jobs: running + pending, straight from the live queue ----------
 # The literal "active|" prefix plus a trailing "%j" (name) keep every column

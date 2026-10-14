@@ -481,9 +481,11 @@ def _patch_jobs(monkeypatch, *, live=True, jobs=None, error=None) -> None:
     monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: live)
 
     def fake_query(spec, user, since_minutes):
+        from cluster_tunnel.jobs import Overview
+
         if error is not None:
             raise RuntimeError(error)
-        return jobs or []
+        return Overview("haic", jobs or [])
 
     monkeypatch.setattr("cluster_tunnel.jobs.query", fake_query)
 
@@ -523,6 +525,7 @@ def test_jobs_json_shape(tmp_path: Path, monkeypatch) -> None:
     payload = json.loads(r.output)
     assert payload["since_minutes"] == 120
     assert payload["clusters"][0]["cluster"] == "localhost"
+    assert payload["clusters"][0]["slurm_cluster"] == "haic"
     job = payload["clusters"][0]["jobs"][0]
     assert job["jobid"] == "960652"
     assert job["state"] == "CANCELLED by 30927"  # full raw state kept in JSON

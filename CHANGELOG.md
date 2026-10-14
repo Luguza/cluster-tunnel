@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Each job's start time.** `ctun jobs --json` and `api.jobs()` report a job's
   `start` as Slurm prints it: when it started, or for a pending job Slurm's
   estimate (`N/A` while it has none).
+- **Each cluster's Slurm name.** `ctun jobs --json` and `api.jobs()` name each
+  cluster's Slurm `ClusterName` in `slurm_cluster`, the value jobs see as
+  `SLURM_CLUSTER_NAME` (`null` when unknown), so a front end can match a job to
+  tags like `slurm:<ClusterName>:<job id>`.
 
 ## [0.8.0] - 2026-10-20
 
