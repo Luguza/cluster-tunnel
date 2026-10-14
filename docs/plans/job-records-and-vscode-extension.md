@@ -57,14 +57,16 @@ Do not re-open these without the user.
 
 | # | Decision |
 |---|---|
-| D4 | **No new ctun commands.** `ctun run` gets optional `--project` and `--note`. When its output contains `Submitted batch job <N>`, ctun writes a job record. |
+| D4 | **No new ctun commands.** `ctun run` gets optional `--project` and `--note`. When its output contains `Submitted batch job <N>`, ctun writes a job record. Its `--project` is the default project source (D13). |
 | D5 | Records live **on the cluster**: `~/.ctun/jobs/<slurm cluster>/<job id>.json`, keyed by SLURM's own `ClusterName` (resolved on the cluster), never by the name in a machine's local config. Every machine finds the same folder. |
 | D6 | Records are **write-once**: note and facts, never changed afterwards. The cluster script only writes and lists files. |
 | D7 | Facts are collected by ctun, never written by the agent: commit, uncommitted files, pushed or not, submitting host, submit time, job name, working directory. ctun takes the working directory from SLURM (`scontrol show job <N>` → `WorkDir`) and runs git there. They describe the code **at submit time**. |
 | D8 | A note is an **unreviewed draft** until the human confirms, edits or discards it in the extension. Reviews belong to the extension, not the record: they live in its `globalState`, which VS Code Settings Sync carries to the user's other machines. The agent has no command to write a review. |
 | D9 | A note references commits and jobs only with explicit markers, `commit:<hash>` and `job:<id>`. ctun rejects a note whose marked reference it cannot find. |
-| D10 | "Previous run" is the latest earlier record with the same project and job name. The commit list between two runs comes from `ctun run -- git -C <workdir> log …`. |
-| D11 | A job's W&B run is found through a W&B tag `slurm:<job id>`, appended at every start, so a resumed run carries the IDs of all its jobs. Which metrics the extension shows is a setting. |
+| D10 | "Previous run" is the latest earlier record with the same project (from the active source, D13) and job name. The commit list between two runs comes from `ctun run -- git -C <workdir> log …`. |
+| D11 | A job's W&B run is found through a W&B tag `slurm:<ClusterName>:<job id>`, appended at every start, so a resumed run carries the IDs of all its jobs. `ClusterName` is what the job sees as `SLURM_CLUSTER_NAME`; `ctun jobs --json` reports it per cluster as `slurm_cluster`. The older tag `slurm:<job id>` still matches on any cluster; the cluster tag wins. The run is searched in every project of the W&B entity (the first 100). Which metrics the extension shows is a setting. |
+| D12 | **Libraries are add-ons of the extension, not of ctun.** The core knows no library. An add-on fills only three slots: a project per job (after each jobs refresh), lines in a job's details (when they open) and a row in the Setup view. The core draws them; an add-on never touches the webview or the table model. Each add-on is off by default (`ctun.addons.<id>.enabled`) and keeps its own settings and secrets. The interface is internal; it is exported from `activate()` when a second library needs it. W&B is the first add-on. |
+| D13 | **One project source at a time.** `ctun.projects.source` is `record` (the record's `--project`, the default) or an add-on's ID, e.g. `wandb`. The sources never mix. If the named add-on is off, every job is Unassigned and the Setup view marks the setting as broken. |
 
 ## Phase 0 — checks before any code
 
