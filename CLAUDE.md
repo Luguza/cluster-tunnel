@@ -87,7 +87,7 @@ the Rich-formatted help. One file per command domain:
 - `.github/workflows/ci.yml` — CI: the test suite on Ubuntu and Windows.
 
 The VS Code extension that renders ctun's JSON (jobs, job records, notes) lives
-in its own repo, <https://github.com/Luguza/ctun-vscode>; it talks to ctun only
+in its own repo, <https://github.com/aimat-lab/cluster-tunnel-vscode>; it talks to ctun only
 through the CLI, so keep `status -j`, `jobs --json` and `info --json` stable.
 
 ## Development
