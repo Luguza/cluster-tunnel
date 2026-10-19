@@ -37,6 +37,7 @@ $ ctun -t horeka logout                 # close the tunnel
 - [Using ctun with coding agents](#-using-ctun-with-coding-agents)
 - [Files and locations](#-files-and-locations)
 - [Contributing](#-contributing)
+- [License](#-license)
 
 ---
 
@@ -505,6 +506,12 @@ folder exists; move the folder to switch over.
 If there is a feature you would like to see, or you run into any issue with the
 program, please [open an issue](https://github.com/aimat-lab/cluster-tunnel/issues/new)
 — feedback of any kind is very welcome.
+
+---
+
+## 📄 License
+
+cluster-tunnel is released under the [MIT License](./LICENSE).
 
 ---
 
