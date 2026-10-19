@@ -42,6 +42,8 @@ clusters:
   #     session_limit: 500
   #     unit: jobh                   # job-hours (Slurm job wall-clock; concurrent jobs add up)
   #     guard_commands: [sbatch, srun, salloc, aslurm, aslurmx]
+  #     guard_scope: every-command   # also inside `bash -c '...'`, after env/timeout/xargs;
+  #                                  # default first-command: the first word only
   #     fail_mode: closed
 
   # HAICORE @ KIT

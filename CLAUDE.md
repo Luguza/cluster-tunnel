@@ -120,7 +120,8 @@ A cluster entry (see `config.example.yaml` and `skill/reference.md`):
 - `description` — one string, or a list of notes that `ctun note` appends to;
   surfaced by `ctun info`
 - `restrictions` (advisory) — surfaced by `ctun info`
-- `budget` — `script` + `session_limit` + `unit` + `guard_commands` + `fail_mode`
+- `budget` — `script` + `session_limit` + `unit` + `guard_commands` + `guard_scope`
+  (`first-command` default | `every-command`) + `fail_mode`
 
 Under `defaults`, `wsl_distro` picks the WSL distro on Windows. There,
 `identity_file`, `socket_dir` and `ssh_config` are paths inside WSL.

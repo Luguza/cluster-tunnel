@@ -502,3 +502,22 @@ def test_jobs_with_no_clusters(tmp_path: Path, monkeypatch) -> None:
     r = _invoke("jobs")
     assert r.exit_code == 0
     assert "No clusters configured. Run `ctun config --init`." in _norm(r)
+
+
+# --- guard_scope through the CLI (added with the opt-in scope) -------------------
+
+
+def test_every_command_scope_blocks_a_submission_inside_bash_c(tmp_path: Path, monkeypatch) -> None:
+    _config(tmp_path, monkeypatch, GUARDED + "      guard_scope: every-command\n")
+    (tmp_path / "budget").mkdir()
+    (tmp_path / "budget" / "c.sh").write_text("echo 9\n", encoding="utf-8")
+    session.start("c", limit=3.0, unit="jobh")
+    monkeypatch.setattr(ssh, "is_live", lambda spec: True)
+    monkeypatch.setattr(ssh, "probe", lambda *a: subprocess.CompletedProcess([], 0, "9\n", ""))
+    monkeypatch.setattr(ssh, "run", lambda *a, **k: pytest.fail("must not run"))
+    r = _invoke("-t", "c", "run", "--", "bash", "-c", "cd x && sbatch j.sh")
+    assert r.exit_code == ExitCode.BUDGET_EXHAUSTED
+    assert "ctun-error: budget_exhausted" in _norm(r)
+
+    info = json.loads(_invoke("-t", "c", "info", "--json").output)
+    assert info["budget"]["guard_scope"] == "every-command"

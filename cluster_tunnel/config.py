@@ -44,6 +44,9 @@ class Budget(BaseModel):
     guard_commands: list[str] = Field(
         default_factory=lambda: list(constants.DEFAULT_GUARD_COMMANDS)
     )
+    # Where the guard looks for those commands: the first word only, or every
+    # word where a command may start (`bash -c '... && sbatch x'`, `timeout 60 srun`).
+    guard_scope: Literal["first-command", "every-command"] = "first-command"
     fail_mode: str = constants.DEFAULT_FAIL_MODE
 
     @model_validator(mode="after")

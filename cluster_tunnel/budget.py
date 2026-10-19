@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -49,7 +50,7 @@ def first_token_name(tokens: list[str]) -> str:
     return os.path.basename(first_command_token(tokens))
 
 
-def is_guarded(tokens: list[str], guard_commands: list[str]) -> bool:
+def is_guarded(tokens: list[str], guard_commands: list[str], scope: str = "first-command") -> bool:
     """True if the command is a job submission subject to the budget guard.
 
     Each entry in ``guard_commands`` is treated as a **regex** matched (fullmatch)
@@ -57,10 +58,16 @@ def is_guarded(tokens: list[str], guard_commands: list[str]) -> bool:
     ``s(batch|run|alloc)`` work. An entry that isn't valid regex falls back to a
     literal comparison, so plain names like ``sbatch`` keep working. Matching is
     case-insensitive and ignores any path prefix or leading env assignments.
+
+    The ``scope`` ``"first-command"`` looks at the first word only;
+    ``"every-command"`` at every word where a command may start (see
+    :func:`command_names`).
     """
-    name = first_token_name(tokens)
-    if not name:
-        return False
+    names = command_names(tokens) if scope == "every-command" else [first_token_name(tokens)]
+    return any(_is_guard_command(name, guard_commands) for name in names if name)
+
+
+def _is_guard_command(name: str, guard_commands: list[str]) -> bool:
     for pattern in guard_commands:
         try:
             if re.fullmatch(pattern, name, re.IGNORECASE):
@@ -69,6 +76,105 @@ def is_guarded(tokens: list[str], guard_commands: list[str]) -> bool:
             if pattern == name:  # invalid regex -> literal match
                 return True
     return False
+
+
+#: Commands that run the command given in their arguments: after one of these,
+#: every word of the same command may be the one that runs (``timeout 60 sbatch``,
+#: ``xargs -n1 sbatch``, ``nice -n 5 srun``).
+_WRAPPERS = frozenset({
+    "env", "nohup", "nice", "ionice", "time", "timeout", "exec", "command", "builtin",
+    "setsid", "stdbuf", "xargs", "flock", "sudo", "doas", "watch", "unbuffer", "chronic",
+    "taskset", "numactl", "strace", "ltrace", "parallel", "ssh", "su", "script",
+})
+#: Shells whose ``-c`` argument is a script to search.
+_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "mksh", "fish", "csh", "tcsh"})
+#: Shell words that can precede a command in a script.
+_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "coproc"})
+#: Command substitutions, which run even inside double quotes.
+_SUBSTITUTION = re.compile(r"\$\(|`")
+#: Bounds the search through nested shells and wrappers.
+_MAX_DEPTH = 8
+
+
+def command_names(tokens: list[str]) -> list[str]:
+    """The bare names of every command ``tokens`` may run, as far as its words tell.
+
+    That is the first word (after ``VAR=value`` assignments), every word after a
+    wrapper such as ``env``, ``timeout`` or ``xargs``, the command after
+    ``find -exec``, and the commands in a script handed to ``bash -c``,
+    ``sh -c`` or ``eval``: split where a command can start (``;``, ``&&``,
+    ``||``, ``|``, ``&``, parentheses, newlines; quotes respected) and inside
+    every ``$(...)`` or backtick substitution, even a quoted one. Where in doubt
+    it finds too many rather than too few. A script file run as
+    ``bash submit.sh`` is not looked into.
+    """
+    return list(_simple_command(list(tokens), 0))
+
+
+def _simple_command(words: list[str], depth: int):
+    """The command names of one simple command (no separators in ``words``)."""
+    i = 0
+    while i < len(words) and (_ENV_ASSIGN.fullmatch(words[i]) or words[i] in _KEYWORDS):
+        i += 1
+    if i < len(words) and depth <= _MAX_DEPTH:
+        yield from _command_at(words, i, depth)
+
+
+def _command_at(words: list[str], i: int, depth: int):
+    """The command named by ``words[i]``, and what it runs in turn."""
+    name = os.path.basename(words[i])
+    yield name
+    lowered = name.lower()
+    if lowered in _SHELLS:
+        for j in range(i + 1, len(words) - 1):
+            # -c, or combined short options such as -lc / -ec
+            if words[j].startswith("-") and not words[j].startswith("--") and "c" in words[j][1:]:
+                yield from _script(words[j + 1], depth + 1)
+                break
+    elif lowered == "eval":
+        yield from _script(" ".join(words[i + 1:]), depth + 1)
+    elif lowered == "find":
+        for j in range(i + 1, len(words)):
+            if words[j] in ("-exec", "-execdir", "-ok", "-okdir"):
+                yield from _simple_command(words[j + 1:], depth + 1)
+    elif lowered in _WRAPPERS:
+        # Any later word may be the command that runs; one pass, so nested
+        # wrappers (`nohup timeout 60 sbatch`) add no work.
+        for j in range(i + 1, len(words)):
+            if words[j].startswith("-") or _ENV_ASSIGN.fullmatch(words[j]):
+                continue
+            inner = os.path.basename(words[j]).lower()
+            if inner in _SHELLS or inner in ("eval", "find"):
+                yield from _command_at(words, j, depth + 1)
+            else:
+                yield os.path.basename(words[j])
+
+
+def _script(text: str, depth: int):
+    """The command names in shell code."""
+    for piece in _SUBSTITUTION.split(text):
+        for words in _commands(piece.replace("\n", ";")):
+            yield from _simple_command(words, depth)
+
+
+def _commands(code: str) -> list[list[str]]:
+    """The words of each command in ``code``, split at the shell's operators.
+
+    Quotes are respected. Where a substitution split cut a quote in two, the
+    words are split at operators and spaces regardless, quote marks dropped.
+    """
+    lexer = shlex.shlex(code, posix=True, punctuation_chars=True)
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        tokens = [w.strip("'\"") for w in re.split(r"([;&|()<>]+|\s+)", code) if w.strip()]
+    commands: list[list[str]] = [[]]
+    for token in tokens:
+        if token and set(token) <= set(";&|()<>"):
+            commands.append([])
+        else:
+            commands[-1].append(token)
+    return [words for words in commands if words]
 
 
 def remote_user(spec: ConnSpec, cluster: Cluster) -> str:
@@ -110,7 +216,7 @@ def decide(
     cluster = config_mod.get_cluster(config, name)
     budget = cluster.budget
 
-    if budget is None or not is_guarded(tokens, budget.guard_commands):
+    if budget is None or not is_guarded(tokens, budget.guard_commands, budget.guard_scope):
         return Decision(True, "not a guarded command")
     return check(config, name, spec, config_path)
 

@@ -434,6 +434,7 @@ clusters:
       session_limit: 500          # default budget; overridden by `login --limit`
       unit: jobh                  # label for display (bundled scripts report job-hours)
       guard_commands: [sbatch, srun, salloc]   # commands subject to the budget check
+      guard_scope: every-command  # also inside `bash -c`, after env/timeout/xargs (default: first-command)
       fail_mode: closed           # if the budget script errors: "closed" blocks, "open" allows
 ```
 
@@ -466,6 +467,19 @@ Before running a command whose first word is in `guard_commands` (`sbatch`, `sru
 
 Commands that aren't job submissions (`ls`, `squeue`, `sacct`, …) always pass through. If
 no limit is set for the cluster, it runs unguarded.
+
+By default only the **first word** counts, so `bash -c 'cd run && sbatch job.sh'` or
+`timeout 60 srun …` pass unchecked. Set `guard_scope: every-command` in a cluster's
+`budget` to have the guard look wherever a command can start:
+
+- in a script given to `bash -c`, `sh -c` or `eval`: after `;`, `&&`, `||`, `|`, `&` and
+  newlines, and inside `$(…)` and backticks (even quoted ones; quoted text otherwise is
+  not a command);
+- after wrappers such as `env`, `nohup`, `timeout`, `nice`, `xargs`, `flock` or `sudo`;
+- after `find -exec`.
+
+Where in doubt it checks rather than lets through. It can't see into a script file run as
+`bash submit_all.sh`; a command like that is not recognized as a submission.
 
 The default metric is **job-hours**: the Slurm job *wall-clock* time you have run since the
 session started, counting only the portion of each job inside the session window (concurrent

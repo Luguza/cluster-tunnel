@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and asking (`-y/--yes` without a terminal; never for a changed key). From then on a
   login refuses any other key. In the API: `host_key` and `pin_host_key`, which pins
   only the fingerprint a person confirmed.
+- **Budget guard scope.** A cluster's `budget` can set `guard_scope: every-command` so
+  the guard finds `guard_commands` wherever a command can start, not only in the first
+  word: in scripts given to `bash -c`, `sh -c` or `eval` (after `;`, `&&`, `||`, `|`,
+  `&`, newlines, and inside `$(…)` and backticks), after wrappers such as `env`,
+  `nohup`, `timeout` or `xargs`, and after `find -exec`. The default, `first-command`,
+  keeps the previous behaviour. `ctun info` shows the scope.
 
 ### Changed
 

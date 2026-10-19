@@ -138,7 +138,10 @@ is the period since the last `login`.
 How it works:
 1. Before running a command whose first word is a **guarded command**
    (`sbatch`, `srun`, `salloc`, plus any extras shown by `info`), `ctun` runs
-   the cluster's budget script on the login node over the tunnel.
+   the cluster's budget script on the login node over the tunnel. Where `info`
+   says the guard looks "wherever a command starts", that includes `bash -c`
+   scripts and commands behind `env`, `timeout`, `xargs` and the like. Either
+   way, wrapping a submission to get past the guard is bypassing it.
 2. That script prints a single number — compute used since the session started.
 3. If `used >= limit`, the submission is **blocked** before it reaches the
    scheduler. Otherwise it runs, and remaining budget is shown on stderr.

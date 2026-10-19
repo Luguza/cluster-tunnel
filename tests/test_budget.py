@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from cluster_tunnel import budget
 from cluster_tunnel import config as cfg
 from cluster_tunnel.ssh import ConnSpec
@@ -134,3 +136,82 @@ def test_check_without_a_budget_section_allows(tmp_path: Path) -> None:
     p.write_text("clusters:\n  k:\n    host: h\n", encoding="utf-8")
     d = budget.check(cfg.load_config(str(p)), "k", _spec(), p)
     assert d.allowed and d.reason == "no budget configured"
+
+
+# --- guard_scope: every-command ---------------------------------------------------
+
+
+GUARDS = ["sbatch", "srun", "salloc"]
+
+#: (command, found by every-command, found by first-command)
+SCOPE_CASES = [
+    (["sbatch", "j.sh"], True, True),
+    (["/opt/slurm/bin/sbatch", "j"], True, True),
+    (["squeue", "--me"], False, False),
+    (["grep", "sbatch", "slurm.log"], False, False),
+    (["cat", "sbatch.log"], False, False),
+    (["echo", "x; sbatch"], False, False),  # echo's argument is not run
+    (["bash", "-c", "cd run && sbatch job.sh"], True, False),
+    (["bash", "-lc", "module load x; srun ./a"], True, False),
+    (["sh", "-c", "for f in *.sh; do sbatch $f; done"], True, False),
+    (["sh", "-c", "echo $(sbatch --parsable j.sh)"], True, False),
+    (["sh", "-c", 'echo "id: $(sbatch --parsable j.sh)"'], True, False),  # runs inside quotes
+    (["sh", "-c", "echo `salloc -N1`"], True, False),
+    (["sh", "-c", "squeue\nsbatch j.sh"], True, False),
+    (["sh", "-c", "{ sbatch j.sh; }"], True, False),
+    (["sh", "-c", "(cd x; srun y) > out.log 2>&1"], True, False),
+    (["bash", "-c", "echo 'not; sbatch'"], False, False),  # quoted text, not run
+    (["bash", "-c", "grep sbatch log | wc -l"], False, False),
+    (["A=1", "sbatch", "j.sh"], True, True),  # a leading VAR= is skipped by both
+    (["env", "A=1", "sbatch", "j.sh"], True, False),  # `env` is the first word
+    (["env", "-i", "sbatch", "j.sh"], True, False),
+    (["timeout", "60", "srun", "x"], True, False),
+    (["nice", "-n", "5", "srun", "x"], True, False),
+    (["nohup", "timeout", "60", "bash", "-c", "sbatch j"], True, False),
+    (["xargs", "-n1", "sbatch"], True, False),
+    (["find", ".", "-name", "*.sh", "-exec", "sbatch", "{}", ";"], True, False),
+    (["eval", "sbatch j.sh"], True, False),
+    (["bash", "submit_all.sh"], False, False),  # a script file is not looked into
+]
+
+
+@pytest.mark.parametrize("tokens, every, first", SCOPE_CASES, ids=lambda v: " ".join(v) if isinstance(v, list) else None)
+def test_guard_scope(tokens: list, every: bool, first: bool) -> None:
+    assert budget.is_guarded(tokens, GUARDS, "every-command") is every
+    assert budget.is_guarded(tokens, GUARDS, "first-command") is first
+    assert budget.is_guarded(tokens, GUARDS) is first  # the default scope
+
+
+def test_guard_scope_keeps_regex_patterns() -> None:
+    assert budget.is_guarded(["bash", "-c", "ASLURMX job"], ["aslurmx?"], "every-command")
+
+
+def test_guard_scope_stays_fast_on_pathological_commands() -> None:
+    import time
+
+    start = time.monotonic()
+    assert budget.is_guarded(["xargs"] * 5000 + ["sbatch"], GUARDS, "every-command")
+    assert budget.is_guarded(["bash", "-c", "bash -c " * 200 + "true"], GUARDS, "every-command") is False
+    assert time.monotonic() - start < 2
+
+
+def test_decide_follows_the_clusters_guard_scope(tmp_path: Path, monkeypatch) -> None:
+    c, p = _config_with_budget(tmp_path, script=_dummy_script(tmp_path))
+    _patch(monkeypatch, sess={"start_epoch": 0, "limit": 100, "unit": "core-hours"}, probe_stdout="150\n")
+    hidden = ["bash", "-c", "cd run && sbatch j.sh"]
+    assert budget.decide(c, "k", _spec(), hidden, p).allowed  # first-command: not seen
+    c.clusters["k"].budget.guard_scope = "every-command"
+    d = budget.decide(c, "k", _spec(), hidden, p)
+    assert not d.allowed and d.used == 150.0
+
+
+def test_guard_scope_values(tmp_path: Path) -> None:
+    body = "clusters:\n  k:\n    host: h\n    budget:\n      guard_scope: {}\n"
+    p = tmp_path / "config.yaml"
+    p.write_text(body.format("every-command"), encoding="utf-8")
+    assert cfg.load_config(str(p)).clusters["k"].budget.guard_scope == "every-command"
+    p.write_text(body.format("anywhere"), encoding="utf-8")
+    with pytest.raises(ValueError, match="guard_scope"):
+        cfg.load_config(str(p))
+    p.write_text("clusters:\n  k:\n    host: h\n    budget: {}\n", encoding="utf-8")
+    assert cfg.load_config(str(p)).clusters["k"].budget.guard_scope == "first-command"

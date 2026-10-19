@@ -213,7 +213,9 @@ Before executing a command, `ctun`:
 
 1. **Classify.** If the command's first token ∈ `budget.guard_commands`
    (`[sbatch, srun, salloc]`), it is a *submission* and is gated. Otherwise it runs
-   immediately, unguarded.
+   immediately, unguarded. With `budget.guard_scope: every-command`, every word where
+   a command can start counts (scripts given to `bash -c`/`sh -c`/`eval`, words after
+   wrappers such as `env`/`timeout`/`xargs`, `find -exec`): `budget.command_names`.
 2. **Probe (remote).** Pipe the cluster's bash script through the live tunnel and run
    it *on the login node*, passing the session start as an argument:
    ```

@@ -198,6 +198,7 @@ class ContextCommandsMixin:
             "usage_error": usage_error,
             "script_path": script_path,
             "guard_commands": cluster.budget.guard_commands if cluster.budget else None,
+            "guard_scope": cluster.budget.guard_scope if cluster.budget else None,
             "fail_mode": cluster.budget.fail_mode if cluster.budget else None,
             "session_limit": cluster.budget.session_limit if cluster.budget else None,
         }
@@ -224,6 +225,7 @@ class ContextCommandsMixin:
                 "error": b["usage_error"],
                 "script": b["script_path"],
                 "guard_commands": b["guard_commands"],
+                "guard_scope": b["guard_scope"],
                 "fail_mode": b["fail_mode"],
                 "session_limit": b["session_limit"],
             },
@@ -288,7 +290,8 @@ class ContextCommandsMixin:
 
         if b["guard_commands"]:
             guarded = ", ".join(b["guard_commands"])
-            body.append(f"  guards: [orange3]{guarded}[/orange3]")
+            where = " [dim](wherever a command starts)[/dim]" if b["guard_scope"] == "every-command" else ""
+            body.append(f"  guards: [orange3]{guarded}[/orange3]{where}")
         if b["fail_mode"]:
             body.append(f"  on probe error: [orange3]{b['fail_mode']}[/orange3]")
         if b["script_path"]:
