@@ -5,28 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] - 2026-10-14
-
-### Added
-
-- **Cluster notes.** A cluster's `description` can now be a list of notes as well as
-  one string. `ctun info` prints a list as bullet points, and `info --json` keeps
-  whichever form the config uses, so existing configs and JSON readers are unaffected.
-- `ctun -t <cluster> note "<text>"` appends a note to that list in `config.yaml`, with
-  a `# added via ctun note, <date>` comment. Only those lines change: comments and
-  layout elsewhere stay as they are, and the edited file must parse to exactly the
-  intended change before it is written. The skill has agents propose notes and run
-  `note` only after the user approves the exact text.
-- `ctun config --migrate` converts old-style entries to the current format; for now,
-  single-string descriptions into lists (one note per blank-line-separated
-  paragraph). It shows a diff, asks before writing (`-y/--yes` skips the question;
-  without a terminal it only previews), and keeps the previous file as
-  `config.yaml.bak`. Old configs keep working without it; once migrated, ctun 0.5.0
-  and older can't read the file. `ctun config --validate` mentions when a migration
-  is available.
-- A description list item that YAML doesn't read as text (`- Account: x` is a
-  mapping, `- yes` a true/false value) is reported by item number, with a hint to
-  quote it.
+## [Unreleased]
 
 ### Added
 
@@ -54,6 +33,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cluster, also with `job_records: false`. `ctun logs` shows them after the
   command (`→ job 4818213`), and `ctun logs --json` gives them as `job_ids`.
   Older logs still read.
+
+### Fixed
+
+- `ctun jobs --json` no longer drops every record of a cluster with "could not
+  read the job records: exit code 1" when the last listed job has no record.
+
+## [0.6.0] - 2026-10-14
+
+### Added
+
+- **Cluster notes.** A cluster's `description` can now be a list of notes as well as
+  one string. `ctun info` prints a list as bullet points, and `info --json` keeps
+  whichever form the config uses, so existing configs and JSON readers are unaffected.
+- `ctun -t <cluster> note "<text>"` appends a note to that list in `config.yaml`, with
+  a `# added via ctun note, <date>` comment. Only those lines change: comments and
+  layout elsewhere stay as they are, and the edited file must parse to exactly the
+  intended change before it is written. The skill has agents propose notes and run
+  `note` only after the user approves the exact text.
+- `ctun config --migrate` converts old-style entries to the current format; for now,
+  single-string descriptions into lists (one note per blank-line-separated
+  paragraph). It shows a diff, asks before writing (`-y/--yes` skips the question;
+  without a terminal it only previews), and keeps the previous file as
+  `config.yaml.bak`. Old configs keep working without it; once migrated, ctun 0.5.0
+  and older can't read the file. `ctun config --validate` mentions when a migration
+  is available.
+- A description list item that YAML doesn't read as text (`- Account: x` is a
+  mapping, `- yes` a true/false value) is reported by item number, with a hint to
+  quote it.
 
 ### Changed
 

@@ -71,13 +71,13 @@ case "$command" in
         fi
         for job_id in "$@"; do
             case "$printed" in *" $job_id "*) continue ;; esac
-            [ -f "$dir/$job_id.json" ] && print_record "$dir/$job_id.json"
+            if [ -f "$dir/$job_id.json" ]; then print_record "$dir/$job_id.json"; fi
         done
         ;;
     all)
         [ -d "$dir" ] || exit 0
         for file in "$dir"/*.json; do
-            [ -f "$file" ] && print_record "$file"
+            if [ -f "$file" ]; then print_record "$file"; fi
         done
         ;;
     *)

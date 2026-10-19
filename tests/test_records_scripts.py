@@ -56,6 +56,7 @@ def test_write_then_list_by_id_and_window(tmp_path: Path, bash: str) -> None:
 
     by_id = _run(bash, tmp_path, "records.sh", "list", "0", "102", "999")
     assert [json.loads(line)["job_id"] for line in by_id.stdout.splitlines()] == ["102"]
+    assert by_id.returncode == 0  # a last job without a record is no failure
 
     in_window = _run(bash, tmp_path, "records.sh", "list", "60", "101")
     assert sorted(json.loads(line)["job_id"] for line in in_window.stdout.splitlines()) == ["101", "102"]
@@ -71,6 +72,12 @@ def test_write_never_overwrites(tmp_path: Path, bash: str) -> None:
 
 def test_list_without_records_is_empty(tmp_path: Path, bash: str) -> None:
     result = _run(bash, tmp_path, "records.sh", "list", "60")
+    assert result.returncode == 0 and result.stdout == ""
+
+
+def test_all_with_an_empty_folder_is_empty(tmp_path: Path, bash: str) -> None:
+    (tmp_path / "home" / ".ctun" / "jobs" / "haic").mkdir(parents=True)
+    result = _run(bash, tmp_path, "records.sh", "all")
     assert result.returncode == 0 and result.stdout == ""
 
 
