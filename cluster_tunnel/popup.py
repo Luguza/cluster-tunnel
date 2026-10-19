@@ -268,9 +268,30 @@ def login_with_password(
         return _login_in_wsl(spec, master, check, password, otp, timeout, verbose)
 
     live, transcript = pty_login.login(master, check, password, otp, timeout, verbose)
-    if not live and verbose and transcript:
-        sys.stderr.write(transcript.decode("utf-8", "replace"))
+    if not live and transcript:
+        _report(transcript.decode("utf-8", "replace"), verbose)
     return live
+
+
+#: What ssh says when it refuses the server's host key.
+_HOST_KEY_TROUBLE = (
+    "REMOTE HOST IDENTIFICATION HAS CHANGED",
+    "Offending",
+    "host key is known for",
+    "Host key verification failed",
+)
+
+
+def _report(output: str, verbose: int) -> None:
+    """After a failed login: all of ssh's output with ``verbose``, otherwise only
+    its lines about a refused host key, which no retry with a password fixes."""
+    if not verbose:
+        output = "".join(
+            line for line in output.splitlines(keepends=True)
+            if any(words in line for words in _HOST_KEY_TROUBLE)
+        )
+    if output:
+        sys.stderr.write(output if output.endswith("\n") else output + "\n")
 
 
 def _login_in_wsl(
@@ -311,6 +332,6 @@ def _login_in_wsl(
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    if res.returncode != 0 and verbose and res.stderr:
-        sys.stderr.write(res.stderr)
+    if res.returncode != 0 and res.stderr:
+        _report(res.stderr, verbose)
     return res.returncode == 0

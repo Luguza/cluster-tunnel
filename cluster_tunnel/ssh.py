@@ -82,23 +82,46 @@ def _identity_opts(spec: ConnSpec) -> list[str]:
     return ["-i", _ssh_path(spec.identity_file)] if spec.identity_file else []
 
 
+def _known_hosts_opts(spec: ConnSpec) -> list[str]:
+    """Where ssh looks up the server's key: a pinned cluster's ``known_hosts_file`` only.
+
+    That file then replaces ssh's own known_hosts (quoted: ssh splits the value
+    at spaces), and the global file and DNS records are not consulted, so the
+    pinned key is the only one trusted. Unpinned, ssh's own files apply.
+    """
+    if not spec.known_hosts_file:
+        return []
+    return [
+        "-o", f'UserKnownHostsFile="{_ssh_path(spec.known_hosts_file)}"',
+        "-o", "GlobalKnownHostsFile=/dev/null",
+        "-o", "VerifyHostKeyDNS=no",
+    ]
+
+
 def _host_key_opts(spec: ConnSpec) -> list[str]:
     """How the master checks the server's host key.
 
     ``accept-new`` records an unknown key on first contact and refuses a changed
-    one; ``yes`` accepts only a key already in ``known_hosts_file``, which then
-    replaces ssh's own known_hosts (quoted: ssh splits the value at spaces).
+    one; ``yes`` accepts only a key already known (see :func:`_known_hosts_opts`).
     Command-line options win over the ssh config, so these always apply.
     """
-    opts = ["-o", f"StrictHostKeyChecking={spec.strict_host_key_checking}"]
-    if spec.known_hosts_file:
-        opts += ["-o", f'UserKnownHostsFile="{_ssh_path(spec.known_hosts_file)}"']
-    return opts
+    return ["-o", f"StrictHostKeyChecking={spec.strict_host_key_checking}", *_known_hosts_opts(spec)]
+
+
+def _pinned_opts(spec: ConnSpec) -> list[str]:
+    """For a pinned or strict cluster, its host-key options on every other ssh too.
+
+    Commands ride the master, but should its socket vanish, ssh connects on its
+    own (batch mode: only with a key); this keeps the pin on that connection.
+    An unpinned cluster's commands keep ssh's own settings, as before.
+    """
+    pinned = spec.known_hosts_file or spec.strict_host_key_checking == "yes"
+    return _host_key_opts(spec) if pinned else []
 
 
 def _socket_opts(spec: ConnSpec) -> list[str]:
     """Options to attach to an existing master via its control socket."""
-    return ["-S", str(spec.socket), *_config_opts(spec)]
+    return ["-S", str(spec.socket), *_config_opts(spec), *_pinned_opts(spec)]
 
 
 def control_opts(spec: ConnSpec) -> list[str]:
@@ -117,6 +140,7 @@ def control_opts(spec: ConnSpec) -> list[str]:
         "-o", "BatchMode=yes",
         *_config_opts(spec),
         *_identity_opts(spec),
+        *_pinned_opts(spec),
     ]
 
 
@@ -141,31 +165,61 @@ def open_master_argv(spec: ConnSpec, verbose: int = 0) -> list[str]:
     return argv
 
 
-def scan_opts(spec: ConnSpec) -> list[str]:
-    """ssh options that fetch the server's host key and stop before logging in.
+#: A connection that only meets the server: a fresh one (no master, no
+#: multiplexing), no prompts, every authentication method off, so it fails
+#: right after the host-key exchange without a password or OTP, and nothing
+#: forwarded, so a server that does let it in gets no agent, X11 or ports.
+#: Should a server let it in unauthenticated, ``true`` is all that runs.
+_NO_LOGIN = [
+    "-o", "ControlMaster=no",
+    "-o", "ControlPath=none",
+    "-o", "BatchMode=yes",
+    "-o", "ConnectTimeout=20",
+    "-o", "PubkeyAuthentication=no",
+    "-o", "PasswordAuthentication=no",
+    "-o", "KbdInteractiveAuthentication=no",
+    "-o", "HostbasedAuthentication=no",
+    "-o", "GSSAPIAuthentication=no",
+    "-o", "ForwardAgent=no",
+    "-o", "ForwardX11=no",
+    "-o", "ClearAllForwardings=yes",
+    "-o", "PermitLocalCommand=no",
+    "-o", "UpdateHostKeys=no",
+]
 
-    A fresh connection (no master, no multiplexing) records the key it is
-    offered in the known_hosts file the caller adds with ``UserKnownHostsFile``
-    (in plain form, and always: the global file is not consulted), then fails at
-    authentication, as every method is off: no password or OTP is ever asked.
-    Should a server let the connection in unauthenticated, ``true`` is all that
-    runs. The cluster's ssh config still applies (``-F``, the alias's ProxyJump).
+
+def check_opts(spec: ConnSpec) -> list[str]:
+    """ssh options that ask what a login would make of the server's key, without one.
+
+    Run with ``-v``, ssh says whether the key it is offered is known and
+    matches, is unknown, or differs from a known one, judged against exactly
+    the known_hosts files the master uses. Strict checking, so nothing is
+    recorded. The cluster's ssh config applies (``-F``, the alias's ProxyJump;
+    a jump host logs in as configured).
     """
     return [
-        "-o", "ControlMaster=no",
-        "-o", "ControlPath=none",
-        "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=20",
+        *_NO_LOGIN,
+        "-o", "StrictHostKeyChecking=yes",
+        *_known_hosts_opts(spec),
+        *_config_opts(spec),
+    ]
+
+
+def scan_opts(spec: ConnSpec, algorithm: Optional[str] = None) -> list[str]:
+    """ssh options that fetch the server's host key without logging in.
+
+    The key is recorded in the known_hosts file the caller adds with
+    ``UserKnownHostsFile``, in plain form and always (the global file is not
+    consulted). ``algorithm`` (``HostKeyAlgorithms``) asks for the key a login
+    negotiates, which :func:`check_opts` reports.
+    """
+    return [
+        *_NO_LOGIN,
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "GlobalKnownHostsFile=/dev/null",
         "-o", "HashKnownHosts=no",
         "-o", "CheckHostIP=no",
-        "-o", "UpdateHostKeys=no",
-        "-o", "PubkeyAuthentication=no",
-        "-o", "PasswordAuthentication=no",
-        "-o", "KbdInteractiveAuthentication=no",
-        "-o", "HostbasedAuthentication=no",
-        "-o", "GSSAPIAuthentication=no",
+        *(["-o", f"HostKeyAlgorithms={algorithm}"] if algorithm else []),
         *_config_opts(spec),
     ]
 

@@ -406,11 +406,32 @@ def test_unknown_clusters_are_refused_everywhere(cfg: Path, monkeypatch) -> None
 # --- host keys -------------------------------------------------------------------
 
 
-def _keys(*fingerprints: str, host: str = "h") -> list:
-    return [
-        api.HostKey(host, "ED25519", 256, fp, f"{host} ssh-ed25519 KEY{i}")
-        for i, fp in enumerate(fingerprints)
-    ]
+def _key(fingerprint: str, host: str = "h") -> api.HostKey:
+    return api.HostKey(host, "ED25519", 256, fingerprint, f"{host} ssh-ed25519 KEY-{fingerprint}")
+
+
+def _server(monkeypatch, *, trust: str, fingerprint: str = "SHA256:a", conflicts=(), pinned=None) -> dict:
+    """Stub ssh's verdict, the key fetch and the key file; record what is asked."""
+    from cluster_tunnel import hostkey as hostkey_mod
+
+    calls: dict = {"scan": [], "pinned": [], "pin": []}
+    monkeypatch.setattr(
+        "cluster_tunnel.hostkey.check",
+        lambda spec: hostkey_mod.Check(trust, "ssh-ed25519", fingerprint, list(conflicts)),
+    )
+
+    def fake_scan(spec, algorithm=None):
+        calls["scan"].append(algorithm)
+        return [_key(fingerprint)]
+
+    def fake_pinned(spec, file, host):
+        calls["pinned"].append((file, host))
+        return pinned or []
+
+    monkeypatch.setattr("cluster_tunnel.hostkey.scan", fake_scan)
+    monkeypatch.setattr("cluster_tunnel.hostkey.pinned", fake_pinned)
+    monkeypatch.setattr("cluster_tunnel.hostkey.pin", lambda spec, file, keys: calls["pin"].append((file, keys)))
+    return calls
 
 
 def _pinned_config(tmp_path: Path) -> Path:
@@ -423,76 +444,88 @@ def _pinned_config(tmp_path: Path) -> Path:
 
 
 def test_host_key_of_an_unpinned_cluster(cfg: Path, monkeypatch) -> None:
-    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: _keys("SHA256:a"))
-    _forbid(monkeypatch, "cluster_tunnel.hostkey.pinned")  # no known_hosts_file to read
+    calls = _server(monkeypatch, trust="new")
     status = api.host_key("c")
-    assert [k.fingerprint for k in status.offered] == ["SHA256:a"]
+    assert status.offered.fingerprint == "SHA256:a" and status.trust == "new"
     assert status.pinned == [] and not status.strict and not status.matches
+    assert calls["scan"] == ["ssh-ed25519"]  # the key a login negotiates
+    assert calls["pinned"] == []  # no known_hosts_file to read
 
 
-def test_host_key_compares_with_the_pinned_key_of_the_same_host(tmp_path: Path, monkeypatch) -> None:
+def test_host_key_of_a_pinned_cluster(tmp_path: Path, monkeypatch) -> None:
     p = _pinned_config(tmp_path)
-    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: _keys("SHA256:a"))
-    reads: list = []
-    monkeypatch.setattr(
-        "cluster_tunnel.hostkey.pinned", lambda spec, file, host: reads.append((file, host)) or _keys("SHA256:a")
-    )
+    calls = _server(monkeypatch, trust="known", pinned=[_key("SHA256:a")])
     status = api.host_key("bw", config_path=p)
-    assert status.strict and status.matches and status.known_hosts_file == "/kh"
-    assert reads == [("/kh", "h")]
+    assert status.trust == "known" and status.strict and status.matches
+    assert calls["pinned"] == [("/kh", "h")]
+    assert status.as_dict()["matches"] is True and status.as_dict()["trust"] == "known"
 
-    monkeypatch.setattr("cluster_tunnel.hostkey.pinned", lambda spec, file, host: _keys("SHA256:old"))
-    changed = api.host_key("bw", config_path=p).as_dict()
-    assert changed["matches"] is False and changed["pinned"][0]["fingerprint"] == "SHA256:old"
+
+def test_host_key_reports_where_a_different_key_is_trusted(cfg: Path, monkeypatch) -> None:
+    _server(monkeypatch, trust="changed", conflicts=["/home/u/.ssh/known_hosts:3"])
+    status = api.host_key("c")
+    assert status.trust == "changed" and status.conflicts == ["/home/u/.ssh/known_hosts:3"]
+
+
+def test_host_key_refuses_a_server_that_presents_two_keys(cfg: Path, monkeypatch) -> None:
+    _server(monkeypatch, trust="new", fingerprint="SHA256:first")
+    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec, algorithm=None: [_key("SHA256:second")])
+    with pytest.raises(api.HostKeyError, match="two different keys"):
+        api.host_key("c")
 
 
 def test_host_key_of_an_unreachable_server(cfg: Path, monkeypatch) -> None:
     def refused(spec):
         raise RuntimeError("ssh: connect to host h port 22: Connection refused")
 
-    monkeypatch.setattr("cluster_tunnel.hostkey.scan", refused)
-    with pytest.raises(api.HostKeyError, match="cannot fetch the host key of 'c': ssh: connect"):
+    monkeypatch.setattr("cluster_tunnel.hostkey.check", refused)
+    with pytest.raises(api.HostKeyError, match="cannot check the host key of 'c': ssh: connect"):
         api.host_key("c")
 
 
 def test_pin_host_key_refuses_a_key_other_than_the_confirmed_one(cfg: Path, monkeypatch) -> None:
-    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: _keys("SHA256:now"))
-    _forbid(monkeypatch, "cluster_tunnel.hostkey.pin")
+    calls = _server(monkeypatch, trust="new", fingerprint="SHA256:now")
     before = cfg.read_text(encoding="utf-8")
     with pytest.raises(api.HostKeyError, match="presents SHA256:now, not SHA256:confirmed"):
         api.pin_host_key("c", "SHA256:confirmed")
-    assert cfg.read_text(encoding="utf-8") == before
+    assert calls["pin"] == [] and cfg.read_text(encoding="utf-8") == before
 
 
-def test_pin_host_key_stores_the_key_and_makes_logins_strict(cfg: Path, tmp_path: Path, monkeypatch) -> None:
-    keys = _keys("SHA256:a")
-    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: keys)
-    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "conf")
-    pins: list = []
-    monkeypatch.setattr("cluster_tunnel.hostkey.pin", lambda spec, file, k: pins.append((file, k)))
+def test_pin_host_key_does_not_replace_a_trusted_key_unless_told(cfg: Path, monkeypatch) -> None:
+    # ssh trusts another key for the host (e.g. in ~/.ssh/known_hosts): pinning the
+    # one presented now would replace it, which is a person's decision.
+    calls = _server(monkeypatch, trust="changed", conflicts=["/home/u/.ssh/known_hosts:3"])
+    with pytest.raises(api.HostKeyError, match="trust a different key"):
+        api.pin_host_key("c", "SHA256:a")
+    assert calls["pin"] == []
+    api.pin_host_key("c", "SHA256:a", replace=True)
+    assert len(calls["pin"]) == 1
 
+
+def test_pin_host_key_stores_the_key_next_to_the_config(cfg: Path, tmp_path: Path, monkeypatch) -> None:
+    calls = _server(monkeypatch, trust="new")
     status = api.pin_host_key("c", "SHA256:a")
-    file = str(tmp_path / "conf" / "known_hosts")
-    assert pins == [(file, keys)]
+    file = str(tmp_path / "known_hosts")  # next to config.yaml
+    assert calls["pin"] == [(file, [_key("SHA256:a")])]
     entry = api.load_config().clusters["c"]
     assert entry.strict_host_key_checking == "yes" and entry.known_hosts_file == file
-    assert status.strict and status.matches and status.known_hosts_file == file
+    assert status.strict and status.matches and status.trust == "known"
     backup = tmp_path / "config.yaml.bak"
     assert "strict_host_key_checking" not in backup.read_text(encoding="utf-8")
 
     # Pinning the same key again rewrites the key file only, not the config.
     backup.unlink()
     api.pin_host_key("c", "SHA256:a")
-    assert not backup.exists() and len(pins) == 2
+    assert not backup.exists() and len(calls["pin"]) == 2
 
 
 def test_pin_host_key_pins_nothing_when_the_config_cant_be_edited(tmp_path: Path, monkeypatch) -> None:
     p = tmp_path / "flow.yaml"
     p.write_text("clusters: {bw: {host: h}}\n", encoding="utf-8")
-    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: _keys("SHA256:a"))
-    _forbid(monkeypatch, "cluster_tunnel.hostkey.pin")
+    calls = _server(monkeypatch, trust="new")
     with pytest.raises(api.ConfigError, match="cannot pin the host key"):
         api.pin_host_key("bw", "SHA256:a", config_path=p)
+    assert calls["pin"] == []
 
 
 # --- review fixes: config errors, empty commands, stdin, probe timeouts ----------

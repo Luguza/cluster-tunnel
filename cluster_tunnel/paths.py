@@ -64,11 +64,6 @@ def budget_dir() -> Path:
     return config_dir() / "budget"
 
 
-def known_hosts_file() -> Path:
-    """Pinned host keys (``ctun hostkey --pin``), alongside the config file."""
-    return config_dir() / "known_hosts"
-
-
 def ensure_runtime_dirs() -> None:
     """Create the cache-backed runtime directories if they don't exist yet."""
     socket_dir().mkdir(parents=True, exist_ok=True)

@@ -1,29 +1,36 @@
-"""Host-key pinning: the key a cluster's server presents, and the key pinned for it.
+"""Host-key pinning: what a login makes of a cluster's host key, and pinning it.
 
-A tunnel's master accepts an unknown host key on first contact
-(``StrictHostKeyChecking=accept-new``) unless its cluster is pinned:
-``strict_host_key_checking: yes`` with a ``known_hosts_file`` that holds the key
-a person confirmed. That file is read and written where ssh runs (inside WSL on
-Windows), by one POSIX sh helper fed on stdin, so nothing here depends on which
-side of WSL ctun itself runs on.
+A tunnel's master checks the server's key as its cluster says:
+``strict_host_key_checking: accept-new`` (the default) takes an unknown key on
+first contact and refuses a changed one; ``'yes'`` accepts only a known key. A
+cluster is pinned when its ``known_hosts_file`` is set: that file is then the
+only list of trusted keys (ssh's own files and DNS are not consulted).
+
+:func:`check` asks ssh itself what a login would make of the key the server
+presents now, judged against exactly the files the master uses; :func:`scan`
+fetches that key in known_hosts form, to pin it. Neither logs in. The key file
+is read and written where ssh runs (inside WSL on Windows), by one POSIX sh
+helper fed on stdin, with ``ssh-keygen -F``/``-R`` so hashed entries count too.
 """
 
 from __future__ import annotations
 
+import re
 import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
-from cluster_tunnel import paths, ssh, wsl
+from cluster_tunnel import ssh, wsl
 from cluster_tunnel.ssh import ConnSpec
 
-#: Seconds to wait for the helper; covers a cold WSL start and a slow server.
+#: Seconds to wait for a connection or the helper; covers a cold WSL start.
 TIMEOUT = 90
 
 # Operations (the first argument):
 #   scan <target> <ssh option>...  fetch the target's host key into a throwaway
 #       known_hosts file; print its lines, a "--" line, then their fingerprints.
-#   pinned <file> <host>  the same for the lines of <file> that name <host>.
-#   pin <file> <host> <line>...  replace <file>'s lines for <host> with <line>s.
+#   pinned <file> <host>  the same for the keys <file> holds for <host>.
+#   pin <file> <host> <line>...  replace <file>'s keys for <host> with <line>s.
 # A leading "~/" in <file> means $HOME, as in the config. Child commands read
 # /dev/null, not this script on stdin.
 _HELPER = r"""
@@ -48,17 +55,24 @@ pinned)
     [ -f "$f" ] || exit 0
     d=$(mktemp -d) || exit 1
     trap 'rm -rf "$d"' EXIT
-    awk -v h="$2" '$1 == h' "$f" > "$d/known_hosts" || exit 1
+    ssh-keygen -F "$2" -f "$f" </dev/null | grep -v '^#' > "$d/known_hosts"
     [ -s "$d/known_hosts" ] || exit 0
     show "$d/known_hosts"
     ;;
 pin)
     f=$(expand "$1"); h=$2; shift 2
     mkdir -p "$(dirname "$f")" || exit 1
-    t="$f.tmp.$$"
-    trap 'rm -f "$t"' EXIT
-    if [ -f "$f" ]; then awk -v h="$h" '$1 != h' "$f" > "$t" || exit 1; else : > "$t"; fi
-    printf '%s\n' "$@" >> "$t" && mv "$t" "$f"
+    if [ -f "$f" ]; then
+        # ssh-keygen -R leaves the previous file as <file>.old; one that was there stays.
+        [ -e "$f.old" ] && mv "$f.old" "$f.old.$$"
+        ssh-keygen -R "$h" -f "$f" </dev/null >/dev/null 2>&1
+        rc=$?
+        rm -f "$f.old"
+        [ -e "$f.old.$$" ] && mv "$f.old.$$" "$f.old"
+        [ "$rc" -eq 0 ] || exit 1
+        [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ] && echo >> "$f"  # end the last line
+    fi
+    printf '%s\n' "$@" >> "$f"
     ;;
 *)
     echo "unknown operation: $op" >&2
@@ -82,25 +96,68 @@ class HostKey:
         return asdict(self)
 
 
-def default_file() -> str:
-    """Where pinned keys go unless a cluster names its own file (a WSL path on Windows)."""
-    return wsl.DEFAULT_KNOWN_HOSTS if wsl.enabled() else str(paths.known_hosts_file())
+@dataclass
+class Check:
+    """What a login would make of the key the server presents now."""
+
+    trust: str  # "known" (it matches a trusted key), "new" (none is known) or "changed"
+    algorithm: str  # the host-key algorithm negotiated, e.g. ssh-ed25519
+    fingerprint: str  # SHA256:...
+    conflicts: list[str] = field(default_factory=list)  # "file:line" of a differing known key
 
 
-def scan(spec: ConnSpec) -> list[HostKey]:
-    """The host key ``spec``'s server presents now, fetched without logging in.
+def default_file(config_path: Path) -> str:
+    """Where pinned keys go unless a cluster names its own file: next to the config
+    (a WSL path on Windows, where ssh runs)."""
+    if wsl.enabled():
+        return wsl.DEFAULT_KNOWN_HOSTS
+    return str(Path(config_path).parent / "known_hosts")
 
+
+def check(spec: ConnSpec) -> Check:
+    """Ask ssh what a login to ``spec`` would make of the key the server presents.
+
+    One connection with the master's own known_hosts choice but strict checking
+    (nothing is recorded), stopping before authentication. Raises
+    :class:`RuntimeError` with ssh's own words when the server can't be reached.
+    """
+    argv = ["ssh", "-v", *ssh.check_opts(spec), spec.target, "true"]
+    return parse_check(ssh.captured(spec, argv, timeout=TIMEOUT).stderr)
+
+
+def parse_check(stderr: str) -> Check:
+    """Read ssh's verdict from its ``-v`` output."""
+    key = re.search(r"Server host key: (\S+) (SHA256:\S+)", stderr)
+    algorithm = re.search(r"kex: host key algorithm: (\S+)", stderr)
+    if not key:
+        raise RuntimeError(_last_words(stderr) or "the server sent no host key")
+    conflicts = [m.strip() for m in re.findall(r"Offending \S+ key in (.+)", stderr)]
+    if "REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr:
+        trust = "changed"
+    elif re.search(r"is known and matches the \S+ host key", stderr):
+        trust = "known"
+    elif "host key is known for" in stderr or "Host key verification failed" in stderr:
+        trust = "new"
+    else:
+        raise RuntimeError(f"could not tell whether the key is known: {_last_words(stderr)}")
+    return Check(trust, algorithm.group(1) if algorithm else key.group(1), key.group(2), conflicts)
+
+
+def scan(spec: ConnSpec, algorithm: str | None = None) -> list[HostKey]:
+    """The host key ``spec``'s server presents, fetched without logging in.
+
+    ``algorithm`` asks for the key a login negotiates (:attr:`Check.algorithm`).
     Raises :class:`RuntimeError` with ssh's own words when the server can't be
     reached or sends no key.
     """
-    keys = parse(_checked(spec, ["scan", spec.target, *ssh.scan_opts(spec)]))
+    keys = parse(_checked(spec, ["scan", spec.target, *ssh.scan_opts(spec, algorithm)]))
     if not keys:
         raise RuntimeError("the server sent no host key")
     return keys
 
 
 def pinned(spec: ConnSpec, file: str, host: str) -> list[HostKey]:
-    """The keys pinned for ``host`` in ``file``; empty if there are none (or no file)."""
+    """The keys ``file`` holds for ``host`` (hashed entries too); empty if none."""
     return parse(_checked(spec, ["pinned", file, host]))
 
 
@@ -133,6 +190,12 @@ def parse(output: str) -> list[HostKey]:
         kind = printed.rsplit("(", 1)[-1].rstrip(")") if printed.endswith(")") else "?"
         keys.append(HostKey(line.split()[0], kind, int(bits), fingerprint, line))
     return keys
+
+
+def _last_words(stderr: str) -> str:
+    """What ssh said, without its debug chatter."""
+    said = [ln.strip() for ln in stderr.splitlines() if ln.strip() and not ln.startswith("debug")]
+    return "; ".join(said[-3:])
 
 
 def _checked(spec: ConnSpec, args: list[str]) -> str:

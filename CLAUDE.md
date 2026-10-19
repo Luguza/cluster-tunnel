@@ -31,9 +31,9 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
   carry it (`exit_code`, `marker`).
 - `ssh.py` — OpenSSH ControlMaster wrapper; the persistent tunnel transport
   (open/close/liveness of the control socket, connection specs).
-- `hostkey.py` — host-key pinning: fetch the key a server presents (stopping
-  before authentication), read and write the pinned key. Its POSIX sh helper
-  runs where ssh runs (inside WSL on Windows).
+- `hostkey.py` — host-key pinning: ask ssh (`-v`, no login) what a login makes of
+  the server's key, fetch the key, read and write the pinned key file. Its POSIX
+  sh helper runs where ssh runs (inside WSL on Windows).
 - `wsl.py` — the Windows bridge (experimental): on Windows every `ssh`/`rsync`
   runs inside WSL 2 via `wsl.exe`; also the login preflight and local-path
   translation. A no-op elsewhere.
@@ -124,7 +124,7 @@ A cluster entry (see `config.example.yaml` and `skill/reference.md`):
   (`first-command` default | `every-command`) + `fail_mode`
 
 Under `defaults`, `wsl_distro` picks the WSL distro on Windows. There,
-`identity_file`, `socket_dir` and `ssh_config` are paths inside WSL.
+`identity_file`, `socket_dir`, `ssh_config` and `known_hosts_file` are paths inside WSL.
 
 ## Releasing a new version
 

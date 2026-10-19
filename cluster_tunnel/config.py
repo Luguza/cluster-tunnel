@@ -117,6 +117,20 @@ class Cluster(BaseModel):
             raise ValueError("strict_host_key_checking must be 'accept-new' or 'yes'")
         return value
 
+    @field_validator("known_hosts_file")
+    @classmethod
+    def _check_known_hosts_file(cls, value: Optional[str]) -> Optional[str]:
+        # ctun reads and writes this file itself, so it must name the file ssh
+        # reads: no %-tokens, ${VARIABLES} or ~user, which only ssh expands.
+        if value is not None and (
+            "%" in value or "${" in value or (value.startswith("~") and not value.startswith("~/"))
+        ):
+            raise ValueError(
+                "known_hosts_file must be a plain path (a leading ~/ is fine), "
+                "without %-tokens, ${VARIABLES} or ~user"
+            )
+        return value
+
     @model_validator(mode="after")
     def _check(self) -> "Cluster":
         if not self.ssh_alias and not self.host:

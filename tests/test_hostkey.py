@@ -1,8 +1,8 @@
-"""Host-key pinning: the sh helper (run for real) and how its output is read.
+"""Host-key pinning: the sh helper (run for real) and how ssh's words are read.
 
-The helper tests run ``sh``, ``awk`` and ``ssh-keygen`` for real, with a fake
-``ssh`` that records a generated key the way a server's key exchange would.
-``CTUN_TEST_SSHD=<host>`` adds a scan of a real SSH server (no login needed).
+The helper tests run ``sh`` and ``ssh-keygen`` for real, with a fake ``ssh``
+that records a generated key the way a server's key exchange would.
+``CTUN_TEST_SSHD=<host>`` adds checks against a real SSH server (no login needed).
 """
 
 from __future__ import annotations
@@ -16,12 +16,16 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from cluster_tunnel import hostkey, paths, wsl
+from cluster_tunnel import hostkey, wsl
 from cluster_tunnel.ssh import ConnSpec
 
 needs_tools = pytest.mark.skipif(
-    sys.platform == "win32" or not all(shutil.which(t) for t in ("sh", "awk", "ssh-keygen")),
-    reason="runs the POSIX sh helper with awk and ssh-keygen",
+    sys.platform == "win32" or not all(shutil.which(t) for t in ("sh", "ssh-keygen")),
+    reason="runs the POSIX sh helper with ssh-keygen",
+)
+needs_sshd = pytest.mark.skipif(
+    not os.environ.get("CTUN_TEST_SSHD") or sys.platform == "win32",
+    reason="set CTUN_TEST_SSHD=<host> to check a real server",
 )
 
 
@@ -98,7 +102,7 @@ def test_pin_replaces_only_the_hosts_own_lines(tmp_path: Path) -> None:
     assert [k.fingerprint for k in hostkey.pinned(spec, file, "horeka")] == [other_fp]
     assert hostkey.pinned(spec, file, "nobody") == []
     assert hostkey.pinned(spec, str(tmp_path / "missing"), "bw") == []
-    assert sorted(p.name for p in Path(file).parent.iterdir()) == ["known_hosts"]  # no temp left
+    assert sorted(p.name for p in Path(file).parent.iterdir()) == ["known_hosts"]  # no temp, no .old
 
 
 @needs_tools
@@ -116,10 +120,64 @@ def test_pin_takes_one_host_at_a_time() -> None:
         hostkey.pin(_spec(), "kh", keys)
 
 
-@pytest.mark.skipif(not os.environ.get("CTUN_TEST_SSHD"), reason="set CTUN_TEST_SSHD=<host> to scan a real server")
-def test_scan_a_real_server() -> None:
-    [key] = hostkey.scan(_spec(os.environ["CTUN_TEST_SSHD"]))
-    assert key.fingerprint.startswith("SHA256:") and key.kind and key.bits > 0
+@needs_tools
+def test_hashed_entries_count_and_are_replaced(tmp_path: Path) -> None:
+    # A known_hosts written with HashKnownHosts (Ubuntu's default) hides the host names.
+    old, old_fp = _key(tmp_path, "bw", "old")
+    other, _ = _key(tmp_path, "horeka", "other")
+    file = tmp_path / "known_hosts"
+    file.write_text(f"{old}\n{other}", encoding="utf-8")  # no newline at the end
+    subprocess.run(["ssh-keygen", "-H", "-f", str(file)], check=True, capture_output=True)
+    (tmp_path / "known_hosts.old").unlink()  # ssh-keygen's backup of the plain file
+    hosts = [line.split()[0] for line in file.read_text(encoding="utf-8").splitlines()]
+    assert all(host.startswith("|1|") for host in hosts)  # no host name in sight
+
+    assert [k.fingerprint for k in hostkey.pinned(_spec(), str(file), "bw")] == [old_fp]
+    new, new_fp = _key(tmp_path, "bw", "new")
+    hostkey.pin(_spec(), str(file), hostkey.parse(f"{new}\n--\n256 {new_fp} bw (ED25519)\n"))
+    assert [k.fingerprint for k in hostkey.pinned(_spec(), str(file), "bw")] == [new_fp]
+    assert len(hostkey.pinned(_spec(), str(file), "horeka")) == 1
+    assert not (tmp_path / "known_hosts.old").exists()
+
+
+@needs_tools
+def test_pin_keeps_a_backup_that_was_already_there(tmp_path: Path) -> None:
+    line, fingerprint = _key(tmp_path, "bw", "server")
+    file = tmp_path / "known_hosts"
+    file.write_text(f"{line}\n", encoding="utf-8")
+    (tmp_path / "known_hosts.old").write_text("theirs\n", encoding="utf-8")
+    hostkey.pin(_spec(), str(file), hostkey.parse(f"{line}\n--\n256 {fingerprint} bw (ED25519)\n"))
+    assert (tmp_path / "known_hosts.old").read_text(encoding="utf-8") == "theirs\n"
+
+
+# --- against a real server (opt-in) ------------------------------------------------
+
+
+def _real(tmp_path: Path, known_hosts: str | None) -> ConnSpec:
+    spec = _spec(os.environ.get("CTUN_TEST_SSHD", "localhost"))
+    spec.known_hosts_file = known_hosts
+    return spec
+
+
+@needs_sshd
+def test_a_real_server_new_known_and_changed(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.write_text("", encoding="utf-8")
+    new = hostkey.check(_real(tmp_path, str(empty)))
+    assert new.trust == "new" and new.fingerprint.startswith("SHA256:")
+
+    [key] = hostkey.scan(_real(tmp_path, None), new.algorithm)
+    assert key.fingerprint == new.fingerprint
+    good = tmp_path / "good"
+    hostkey.pin(_real(tmp_path, None), str(good), [key])
+    known = hostkey.check(_real(tmp_path, str(good)))
+    assert known.trust == "known" and known.fingerprint == key.fingerprint
+
+    other, _ = _key(tmp_path, key.host, "other")
+    bad = tmp_path / "bad"
+    bad.write_text(f"{other}\n", encoding="utf-8")
+    changed = hostkey.check(_real(tmp_path, str(bad)))
+    assert changed.trust == "changed" and changed.conflicts == [f"{bad}:1"]
 
 
 # --- reading the helper's output ---------------------------------------------------
@@ -146,10 +204,65 @@ def test_parse_refuses_output_it_cannot_pair(out: str) -> None:
 # --- where it runs -------------------------------------------------------------------
 
 
-def test_default_file(monkeypatch) -> None:
-    assert hostkey.default_file() == str(paths.known_hosts_file())
-    monkeypatch.setattr(wsl, "enabled", lambda: True)
-    assert hostkey.default_file() == wsl.DEFAULT_KNOWN_HOSTS
+def test_default_file_sits_next_to_the_config(tmp_path: Path, monkeypatch) -> None:
+    assert hostkey.default_file(tmp_path / "config.yaml") == str(tmp_path / "known_hosts")
+    monkeypatch.setattr(wsl, "enabled", lambda: True)  # ssh runs inside WSL: a path there
+    assert hostkey.default_file(tmp_path / "config.yaml") == wsl.DEFAULT_KNOWN_HOSTS
+
+
+# --- reading ssh's verdict ------------------------------------------------------------
+
+_SERVER = (
+    "debug1: kex: host key algorithm: ssh-ed25519\n"
+    "debug1: Server host key: ssh-ed25519 SHA256:1usCqqf113Q0zG/Llupry8XHwMCA4h8VIPwCzr+7nFE\n"
+)
+
+
+@pytest.mark.parametrize(
+    "said, trust, conflicts",
+    [
+        ("debug1: Host 'localhost' is known and matches the ED25519 host key.\n"
+         "jonas@localhost: Permission denied (publickey,password).\n", "known", []),
+        ("No ED25519 host key is known for localhost and you have requested strict checking.\n"
+         "Host key verification failed.\n", "new", []),
+        ("@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n"
+         "Offending ED25519 key in /home/u/my keys/known_hosts:3\n"
+         "Host key verification failed.\n", "changed", ["/home/u/my keys/known_hosts:3"]),
+    ],
+)
+def test_parse_check(said: str, trust: str, conflicts: list) -> None:
+    verdict = hostkey.parse_check(_SERVER + said)
+    assert (verdict.trust, verdict.algorithm, verdict.conflicts) == (trust, "ssh-ed25519", conflicts)
+    assert verdict.fingerprint == "SHA256:1usCqqf113Q0zG/Llupry8XHwMCA4h8VIPwCzr+7nFE"
+
+
+def test_parse_check_of_an_unreachable_server() -> None:
+    said = "debug1: Connecting to h [10.0.0.1] port 22.\nssh: connect to host h port 22: Connection refused\n"
+    with pytest.raises(RuntimeError, match="Connection refused") as info:
+        hostkey.parse_check(said)
+    assert "debug1" not in str(info.value)
+
+
+def test_parse_check_refuses_to_guess() -> None:
+    with pytest.raises(RuntimeError, match="could not tell"):
+        hostkey.parse_check(_SERVER + "debug1: something else entirely\n")
+
+
+def test_check_runs_ssh_verbosely_with_the_masters_known_hosts(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_captured(spec, argv, stdin=None, timeout=None):
+        seen.update(argv=argv, timeout=timeout)
+        return subprocess.CompletedProcess(argv, 255, "", _SERVER + "Host key verification failed.\n")
+
+    monkeypatch.setattr("cluster_tunnel.ssh.captured", fake_captured)
+    spec = _spec("bw.example")
+    spec.known_hosts_file = "/kh"
+    assert hostkey.check(spec).trust == "new"
+    argv = seen["argv"]
+    assert argv[:2] == ["ssh", "-v"] and argv[-2:] == ["bw.example", "true"]
+    assert "StrictHostKeyChecking=yes" in argv and 'UserKnownHostsFile="/kh"' in argv
+    assert "GlobalKnownHostsFile=/dev/null" in argv and seen["timeout"] == hostkey.TIMEOUT
 
 
 def test_windows_runs_the_helper_inside_wsl_with_unix_line_ends(monkeypatch) -> None:

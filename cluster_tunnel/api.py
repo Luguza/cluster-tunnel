@@ -159,29 +159,33 @@ class LogoutResult:
 
 @dataclass
 class HostKeyStatus:
-    """The host key a cluster's server presents now, against the key pinned for it."""
+    """The host key a cluster's server presents now, and what a login makes of it."""
 
     cluster: str
-    offered: list[HostKey]  # what the server presents now
-    pinned: list[HostKey]  # what known_hosts_file holds for the same host; empty: none
+    offered: HostKey  # the key the server presents to a login
+    trust: str  # what a login would do: "known" accept it, "new" (no key known yet)
+    #             accept it on first contact unless strict, "changed" refuse it
+    pinned: list[HostKey]  # what known_hosts_file holds for the host; empty: none
     strict: bool  # logins accept only a known key (strict_host_key_checking: yes)
-    known_hosts_file: Optional[str]  # None: ssh's own known_hosts
+    known_hosts_file: Optional[str]  # set: the cluster is pinned; None: ssh's own files
+    conflicts: list[str] = field(default_factory=list)  # "file:line" of a differing known key
 
     @property
     def matches(self) -> bool:
-        """True if every key the server presents is pinned."""
-        pinned = {key.fingerprint for key in self.pinned}
-        return bool(self.offered) and all(key.fingerprint in pinned for key in self.offered)
+        """True if the key the server presents is the pinned one."""
+        return any(key.fingerprint == self.offered.fingerprint for key in self.pinned)
 
     def as_dict(self) -> dict:
         """As ``ctun hostkey --json`` prints it."""
         return {
             "cluster": self.cluster,
-            "offered": [key.as_dict() for key in self.offered],
+            "offered": self.offered.as_dict(),
+            "trust": self.trust,
             "pinned": [key.as_dict() for key in self.pinned],
+            "matches": self.matches,
             "strict": self.strict,
             "known_hosts_file": self.known_hosts_file,
-            "matches": self.matches,
+            "conflicts": self.conflicts,
         }
 
 
@@ -410,62 +414,84 @@ def logout(
 def host_key(
     cluster: str, *, config: Optional[Config] = None, config_path: Optional[PathLike] = None
 ) -> HostKeyStatus:
-    """The host key ``cluster``'s server presents now, and whether it is the pinned one.
+    """The host key ``cluster``'s server presents now, and what a login makes of it.
 
-    The key comes over a fresh connection that stops before logging in, so it
-    needs neither a tunnel nor a password. ``pinned`` lists the keys the
-    cluster's ``known_hosts_file`` holds for the same host. Raises
-    :class:`HostKeyError` when the server can't be reached.
+    ssh itself judges the key, against exactly the known_hosts files the
+    tunnel's master uses (``trust``); the key is then fetched in known_hosts
+    form, as a login negotiates it. Both connections stop before logging in, so
+    this needs neither a tunnel nor a password (a ProxyJump host in the ssh
+    config logs in as configured). ``pinned`` lists the keys the cluster's
+    ``known_hosts_file`` holds for the host. Raises :class:`HostKeyError` when
+    the server can't be reached, or presents a different key the second time.
     """
     config, _ = _load(config, config_path)
     entry = _entry(config, cluster)
     spec = ssh.conn_spec(config, cluster)
-    offered = _host_keys(cluster, "fetch", lambda: hostkey_mod.scan(spec))
+    verdict = _host_keys(cluster, "check", lambda: hostkey_mod.check(spec))
+    offered = _host_keys(cluster, "fetch", lambda: hostkey_mod.scan(spec, verdict.algorithm))[0]
+    if offered.fingerprint != verdict.fingerprint:
+        raise HostKeyError(
+            f"'{cluster}' presented {verdict.fingerprint}, then {offered.fingerprint}: "
+            "two different keys for one host. Don't log in until you know why."
+        )
     pinned: list[HostKey] = []
     if entry.known_hosts_file:
         file = entry.known_hosts_file
-        pinned = _host_keys(cluster, "read", lambda: hostkey_mod.pinned(spec, file, offered[0].host))
+        pinned = _host_keys(cluster, "read", lambda: hostkey_mod.pinned(spec, file, offered.host))
     return HostKeyStatus(
         cluster=cluster,
         offered=offered,
+        trust=verdict.trust,
         pinned=pinned,
         strict=entry.strict_host_key_checking == "yes",
         known_hosts_file=entry.known_hosts_file,
+        conflicts=verdict.conflicts,
     )
 
 
 def pin_host_key(
-    cluster: str, fingerprint: str, *, config_path: Optional[PathLike] = None
+    cluster: str,
+    fingerprint: str,
+    *,
+    replace: bool = False,
+    config_path: Optional[PathLike] = None,
 ) -> HostKeyStatus:
     """Pin ``cluster``'s host key: the one with ``fingerprint``, as a person confirmed it.
 
-    Fetches the key again and refuses (:class:`HostKeyError`) unless the server
-    presents exactly that fingerprint. The key then replaces any earlier one for
-    the host in the cluster's ``known_hosts_file`` (default: ctun's own), and
-    the config file gets ``strict_host_key_checking: 'yes'`` and that
-    ``known_hosts_file`` (the previous file is kept as ``<config>.bak``), so later
-    logins accept no other key. Raises :class:`ConfigError` when the config
-    can't be edited safely; then nothing is pinned.
+    Checks the key again (:func:`host_key`) and refuses (:class:`HostKeyError`)
+    unless the server presents exactly that fingerprint, and, without
+    ``replace``, when logins trust a different key for the host: replacing a
+    trusted key is for a person who knows why it changed. The key then replaces
+    any earlier one for the host in the cluster's ``known_hosts_file`` (default:
+    ``known_hosts`` next to the config file), and the config gets
+    ``strict_host_key_checking: 'yes'`` and that ``known_hosts_file`` (the
+    previous config is kept as ``<config>.bak``), so later logins accept no
+    other key. Raises :class:`ConfigError` when the config can't be edited
+    safely; then nothing is pinned.
     """
     path = config_mod.resolve_config_path(_path_arg(config_path))
     config = load_config(config_path)
     entry = _entry(config, cluster)
     spec = ssh.conn_spec(config, cluster)
-    offered = _host_keys(cluster, "fetch", lambda: hostkey_mod.scan(spec))
-    presented = [key.fingerprint for key in offered]
-    if presented != [fingerprint]:
+    status = host_key(cluster, config=config, config_path=config_path)
+    if status.offered.fingerprint != fingerprint:
         raise HostKeyError(
-            f"'{cluster}' presents {', '.join(presented)}, not {fingerprint}; nothing was pinned."
+            f"'{cluster}' presents {status.offered.fingerprint}, not {fingerprint}; nothing was pinned."
         )
-    file = entry.known_hosts_file or hostkey_mod.default_file()
+    if status.trust == "changed" and not replace:
+        raise HostKeyError(
+            f"logins to '{cluster}' trust a different key than the one it presents; replace it "
+            "only once a person knows why it changed (replace=True). Nothing was pinned."
+        )
+    file = entry.known_hosts_file or hostkey_mod.default_file(path)
     try:
         edit = configedit.plan_host_key_pin(path, cluster, file)
     except configedit.EditError as exc:
         raise ConfigError(f"cannot pin the host key in {path}: {exc}") from exc
-    _host_keys(cluster, "pin", lambda: hostkey_mod.pin(spec, file, offered))
+    _host_keys(cluster, "pin", lambda: hostkey_mod.pin(spec, file, [status.offered]))
     if edit.changes:
         configedit.apply(edit, backup=True)
-    return HostKeyStatus(cluster, offered, list(offered), True, file)
+    return HostKeyStatus(cluster, status.offered, "known", [status.offered], True, file)
 
 
 # --- commands ----------------------------------------------------------------------

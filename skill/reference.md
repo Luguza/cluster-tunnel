@@ -138,18 +138,19 @@ ctun -t <cluster> hostkey [-j|--json]
 ctun -t <cluster> hostkey --pin [-y|--yes]
 ```
 
-- Shows the host key the cluster's server presents and whether it is the pinned
-  one. The key comes over a fresh connection that stops before logging in: no
-  password, no OTP, no tunnel needed.
+- Shows the host key the cluster's server presents and what a login would make
+  of it (a key it trusts, a new one, or a different one). It connects without
+  logging in: no password, no OTP, no tunnel needed.
 - Until a key is pinned, logins accept the key on first contact (`accept-new`).
-- `--pin` stores the key in ctun's known_hosts file and sets
+- `--pin` stores the key in a known_hosts file next to the config and sets
   `strict_host_key_checking: 'yes'` and `known_hosts_file` in the cluster's
   config entry, so later logins refuse any other key. It shows the change and
   asks; without a terminal it only shows it, unless `-y/--yes`.
 - **Pinning is the user's decision.** Show them the fingerprint, let them compare
   it with the one the cluster's operators publish, and let them run `--pin`.
-- Exits 1 when the server presents a key other than the pinned one. **Stop and
-  tell the user**; a changed key can only be re-pinned from a terminal.
+- Exits 1 when the server presents a different key than the one logins trust
+  (pinned, or known to ssh). **Stop and tell the user**; such a key can only be
+  pinned from a terminal.
 
 ## `run` — run a command through the tunnel
 

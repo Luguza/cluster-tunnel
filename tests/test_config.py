@@ -211,3 +211,16 @@ def test_windows_validation_flags_a_windows_known_hosts_file(tmp_path: Path, mon
     p = _write(tmp_path, "clusters:\n  c:\n    host: h\n    known_hosts_file: 'C:\\Users\\me\\kh'\n")
     warnings = cfg.validation_warnings(cfg.load_config(str(p)), p)
     assert any("known_hosts_file is a Windows path" in w for w in warnings)
+
+
+@pytest.mark.parametrize("path", ["~/.config/k", "/abs/k", "rel/k"])
+def test_known_hosts_file_takes_plain_paths(tmp_path: Path, path: str) -> None:
+    p = _write(tmp_path, f"clusters:\n  c:\n    host: h\n    known_hosts_file: {path}\n")
+    assert cfg.load_config(str(p)).clusters["c"].known_hosts_file == path
+
+
+@pytest.mark.parametrize("path", ["~/%d/k", "${HOME}/k", "~bob/k"])
+def test_known_hosts_file_refuses_what_only_ssh_would_expand(tmp_path: Path, path: str) -> None:
+    p = _write(tmp_path, f"clusters:\n  c:\n    host: h\n    known_hosts_file: '{path}'\n")
+    with pytest.raises(ValueError, match="plain path"):
+        cfg.load_config(str(p))

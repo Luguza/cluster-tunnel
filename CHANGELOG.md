@@ -20,13 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BudgetExhausted` 11, `BudgetGuardError` 12). The API and `cluster_tunnel.errors`
   are the public interface and follow semantic versioning.
 - **Host-key pinning.** `ctun -t <cluster> hostkey` shows the host key the server
-  presents, fetched over a connection that stops before logging in (no password or
-  OTP), and whether it is the pinned one; it exits 1 on a different key. `--pin` stores
-  the key in ctun's own known_hosts file and sets the new cluster keys
-  `strict_host_key_checking: 'yes'` and `known_hosts_file`, after showing the change
-  and asking (`-y/--yes` without a terminal; never for a changed key). From then on a
-  login refuses any other key. In the API: `host_key` and `pin_host_key`, which pins
-  only the fingerprint a person confirmed.
+  presents and what a login would make of it, as ssh itself judges it against the
+  known_hosts files a login uses: trusted, new, or different from the trusted key (exit
+  1). It connects without logging in, so the cluster asks no password or OTP. `--pin`
+  stores the key in a `known_hosts` file next to the config and sets the new cluster
+  keys `strict_host_key_checking: 'yes'` and `known_hosts_file`, after showing the
+  change and asking (`-y/--yes` without a terminal; never for a changed key). That file
+  is then the only list of trusted keys for the cluster (not ssh's own files, the
+  global file or DNS), on every ssh `ctun` starts for it. ctun 0.6.0 and older can't
+  read a config with these keys. In the API: `host_key`, and `pin_host_key`, which
+  pins only the given fingerprint and replaces a trusted key only with `replace=True`.
 - **Budget guard scope.** A cluster's `budget` can set `guard_scope: every-command` so
   the guard finds `guard_commands` wherever a command can start, not only in the first
   word: in scripts given to `bash -c`, `sh -c` or `eval` (after `;`, `&&`, `||`, `|`,
@@ -43,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The tunnel's host-key checking now follows the cluster's
   `strict_host_key_checking` (default `accept-new`, as before) instead of a fixed
   `accept-new`.
+- When `login --interactive` fails because ssh refused the server's host key, ssh's
+  lines saying so are shown even without `-v`.
+- Probes over the tunnel (budget usage, job list) give up after 120 seconds instead of
+  waiting forever; a budget probe that times out is handled per `fail_mode`.
 
 ## [0.6.0] - 2026-10-14
 
