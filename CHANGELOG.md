@@ -32,9 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pins only the given fingerprint and replaces a trusted key only with `replace=True`.
 - **Budget guard scope.** A cluster's `budget` can set `guard_scope: every-command` so
   the guard finds `guard_commands` wherever a command can start, not only in the first
-  word: in scripts given to `bash -c`, `sh -c` or `eval` (after `;`, `&&`, `||`, `|`,
-  `&`, newlines, and inside `$(…)` and backticks), after wrappers such as `env`,
-  `nohup`, `timeout` or `xargs`, and after `find -exec`. The default, `first-command`,
+  word: in scripts given to `bash -c`, `sh -c`, `eval`, `su -c`, `env -S`, `watch` or
+  `ssh <host>` (split as a shell splits them: comments, here-documents and redirection
+  targets aside, `$(…)` and backticks included), in the command a wrapper such as
+  `env`, `nohup`, `timeout`, `xargs` or `sudo` runs, and after `find -exec`. A command
+  nested too deeply to follow counts as a submission. The default, `first-command`,
   keeps the previous behaviour. `ctun info` shows the scope.
 
 ### Changed

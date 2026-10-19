@@ -172,6 +172,37 @@ SCOPE_CASES = [
     (["find", ".", "-name", "*.sh", "-exec", "sbatch", "{}", ";"], True, False),
     (["eval", "sbatch j.sh"], True, False),
     (["bash", "submit_all.sh"], False, False),  # a script file is not looked into
+    # Scripts are split the way a shell splits them.
+    (["bash", "-c", "# go\nsbatch j.sh"], True, False),  # a comment ends at its line
+    (["bash", "-c", "cd x # go\nsbatch j"], True, False),
+    (["bash", "-c", "n=${#f[@]}; sbatch j"], True, False),  # not a comment
+    (["bash", "-c", "[ $# -eq 0 ] && sbatch j"], True, False),
+    (["bash", "-c", "module load x && \\\nsbatch j"], True, False),  # a continued line
+    (["bash", "-c", "cat > j.sh <<'EOF'\n#SBATCH -N1\necho it's\nsrun ./a\nEOF\nsbatch j.sh"], True, False),
+    (["bash", "-c", "cat > j.sh <<'EOF'\nsrun ./a\nEOF\nls"], False, False),  # a here-doc is data
+    (["bash", "-c", 'echo "a $(sbatch x) b"; srun y'], True, False),
+    (["bash", "-c", "function f { sbatch x; }; f"], True, False),
+    (["bash", "-c", "f() { srun y; }; f"], True, False),
+    (["bash", "-c", "echo x > sbatch"], False, False),  # a redirection's target, not a command
+    (["bash", "-c", "sbatch x 2>&1 | tee log"], True, False),
+    # Shells and wrappers are read the way they read their arguments.
+    (["bash", "-c", "--", "sbatch x"], True, False),
+    (["bash", "-c", "-e", "sbatch x"], True, False),
+    (["bash", "-o", "pipefail", "-c", "sbatch x"], True, False),
+    (["ssh", "login2", "cd x && sbatch j"], True, False),
+    (["ssh", "-p", "2222", "login2", "squeue"], False, False),
+    (["su", "-c", "sbatch x"], True, False),
+    (["flock", "/tmp/l", "-c", "sbatch x"], True, False),
+    (["flock", "/tmp/l", "sbatch", "j"], True, False),
+    (["watch", "squeue; sbatch x"], True, False),
+    (["env", "-S", "sbatch x"], True, False),
+    (["xargs", "-a", "files.txt", "sbatch"], True, False),
+    (["parallel", "sbatch {}", ":::", "a.sh"], True, False),
+    (["sudo", "-u", "bob", "srun", "x"], True, False),
+    (["nohup", "timeout", "-k", "5", "60", "nice", "-n", "5", "srun", "x"], True, False),
+    (["command", "-v", "sbatch"], False, False),  # only looks it up
+    (["timeout", "30", "grep", "-rn", "sbatch", "."], False, False),  # grep's argument
+    (["xargs"] * 9 + ["sbatch"], True, False),  # nested too deeply to follow: guarded
 ]
 
 
@@ -191,7 +222,10 @@ def test_guard_scope_stays_fast_on_pathological_commands() -> None:
 
     start = time.monotonic()
     assert budget.is_guarded(["xargs"] * 5000 + ["sbatch"], GUARDS, "every-command")
-    assert budget.is_guarded(["bash", "-c", "bash -c " * 200 + "true"], GUARDS, "every-command") is False
+    nested_finds = ["find", "."] + ["-exec", "find", "."] * 30 + ["-exec", "true", ";"]
+    assert budget.is_guarded(nested_finds, GUARDS, "every-command")  # too deep: guarded
+    assert budget.is_guarded(["bash", "-c", "$(" * 300 + "sbatch"], GUARDS, "every-command")
+    assert not budget.is_guarded(["bash", "-c", "x" * 200_000 + "; ls"], GUARDS, "every-command")
     assert time.monotonic() - start < 2
 
 

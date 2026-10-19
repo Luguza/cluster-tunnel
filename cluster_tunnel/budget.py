@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -61,10 +60,17 @@ def is_guarded(tokens: list[str], guard_commands: list[str], scope: str = "first
 
     The ``scope`` ``"first-command"`` looks at the first word only;
     ``"every-command"`` at every word where a command may start (see
-    :func:`command_names`).
+    :func:`command_names`), and treats a command nested too deeply to follow
+    as a submission.
     """
-    names = command_names(tokens) if scope == "every-command" else [first_token_name(tokens)]
-    return any(_is_guard_command(name, guard_commands) for name in names if name)
+    if scope != "every-command":
+        name = first_token_name(tokens)
+        return bool(name) and _is_guard_command(name, guard_commands)
+    return any(
+        name == _TOO_DEEP or _is_guard_command(name, guard_commands)
+        for name in command_names(tokens)
+        if name
+    )
 
 
 def _is_guard_command(name: str, guard_commands: list[str]) -> bool:
@@ -78,45 +84,92 @@ def _is_guard_command(name: str, guard_commands: list[str]) -> bool:
     return False
 
 
-#: Commands that run the command given in their arguments: after one of these,
-#: every word of the same command may be the one that runs (``timeout 60 sbatch``,
-#: ``xargs -n1 sbatch``, ``nice -n 5 srun``).
-_WRAPPERS = frozenset({
-    "env", "nohup", "nice", "ionice", "time", "timeout", "exec", "command", "builtin",
-    "setsid", "stdbuf", "xargs", "flock", "sudo", "doas", "watch", "unbuffer", "chronic",
-    "taskset", "numactl", "strace", "ltrace", "parallel", "ssh", "su", "script",
-})
-#: Shells whose ``-c`` argument is a script to search.
-_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "mksh", "fish", "csh", "tcsh"})
-#: Shell words that can precede a command in a script.
-_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "coproc"})
-#: Command substitutions, which run even inside double quotes.
-_SUBSTITUTION = re.compile(r"\$\(|`")
-#: Bounds the search through nested shells and wrappers.
+#: Stands for a command nested too deeply to follow; :func:`is_guarded` guards it.
+_TOO_DEEP = "\x00too-deep"
+#: Bounds the search through nested shells, wrappers and substitutions.
 _MAX_DEPTH = 8
+#: Shells whose ``-c`` argument is a script.
+_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "mksh", "fish", "csh", "tcsh"})
+#: Shell options whose value is the next word (``bash -o pipefail -c ...``).
+_SHELL_VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
+#: Shell words that can come before a command.
+_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "coproc", "function"})
+#: Commands that run a command given in their arguments: the options whose
+#: value is the next word, and how many plain words (a duration, a lock file, a
+#: CPU mask, a host, a user) come before that command.
+_WRAPPERS: dict[str, tuple[frozenset[str], int]] = {
+    "builtin": (frozenset(), 0),
+    "chronic": (frozenset(), 0),
+    "command": (frozenset(), 0),
+    "doas": (frozenset({"-u", "-C"}), 0),
+    "env": (frozenset({"-u", "--unset", "-C", "--chdir"}), 0),
+    "exec": (frozenset({"-a"}), 0),
+    "flock": (frozenset({"-w", "--wait", "--timeout", "-E", "--conflict-exit-code"}), 1),
+    "ionice": (frozenset({"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"}), 0),
+    "ltrace": (frozenset({"-a", "-e", "-l", "-n", "-o", "-p", "-s", "-u"}), 0),
+    "nice": (frozenset({"-n", "--adjustment"}), 0),
+    "nohup": (frozenset(), 0),
+    "numactl": (frozenset({"-C", "--cpunodebind", "-N", "-m", "--membind", "-i", "--interleave",
+                           "-p", "--preferred", "--physcpubind"}), 0),
+    "parallel": (frozenset({"-j", "--jobs", "-N", "-n", "-S", "--sshlogin", "-a", "--arg-file", "-d",
+                            "--delimiter", "--joblog", "--results", "-I", "--colsep", "-C",
+                            "--timeout", "--tmpdir", "--wd"}), 0),
+    "script": (frozenset({"-E", "--echo", "-I", "--log-in", "-O", "--log-out", "-B", "--log-io",
+                          "-T", "--log-timing", "-m", "--logging-format"}), 1),
+    "setsid": (frozenset(), 0),
+    "ssh": (frozenset({"-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m",
+                       "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w"}), 1),
+    "stdbuf": (frozenset({"-i", "-o", "-e", "--input", "--output", "--error"}), 0),
+    "strace": (frozenset({"-a", "-b", "-e", "-E", "-I", "-O", "-o", "-P", "-p", "-S", "-s", "-u", "-X"}), 0),
+    "su": (frozenset({"-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w",
+                      "--whitelist-environment"}), 1),
+    "sudo": (frozenset({"-u", "--user", "-g", "--group", "-C", "--close-from", "-D", "--chdir",
+                        "-h", "--host", "-p", "--prompt", "-r", "--role", "-t", "--type", "-T",
+                        "--command-timeout", "-U", "--other-user"}), 0),
+    "taskset": (frozenset(), 1),
+    "time": (frozenset({"-f", "--format", "-o", "--output"}), 0),
+    "timeout": (frozenset({"-s", "--signal", "-k", "--kill-after"}), 1),
+    "unbuffer": (frozenset(), 0),
+    "watch": (frozenset({"-n", "--interval"}), 0),
+    "xargs": (frozenset({"-a", "--arg-file", "-d", "--delimiter", "-E", "--eof", "-I", "--replace",
+                         "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs", "-s",
+                         "--max-chars", "--process-slot-var"}), 0),
+}
+#: Wrapper options whose value is a command line for a shell (``su -c '...'``).
+_SCRIPT_OPTIONS: dict[str, frozenset[str]] = {
+    "env": frozenset({"-S", "--split-string"}),
+    "flock": frozenset({"-c", "--command"}),
+    "script": frozenset({"-c", "--command"}),
+    "su": frozenset({"-c", "--command"}),
+}
+#: Wrappers that hand the rest of their words to a shell as one command line.
+_JOINED = frozenset({"ssh", "watch", "parallel"})
 
 
 def command_names(tokens: list[str]) -> list[str]:
     """The bare names of every command ``tokens`` may run, as far as its words tell.
 
-    That is the first word (after ``VAR=value`` assignments), every word after a
-    wrapper such as ``env``, ``timeout`` or ``xargs``, the command after
-    ``find -exec``, and the commands in a script handed to ``bash -c``,
-    ``sh -c`` or ``eval``: split where a command can start (``;``, ``&&``,
-    ``||``, ``|``, ``&``, parentheses, newlines; quotes respected) and inside
-    every ``$(...)`` or backtick substitution, even a quoted one. Where in doubt
-    it finds too many rather than too few. A script file run as
-    ``bash submit.sh`` is not looked into.
+    That is the first word (after ``VAR=value`` assignments); the command a
+    wrapper such as ``env``, ``timeout``, ``xargs``, ``sudo`` or ``ssh host``
+    runs, after its options and leading arguments; the command after
+    ``find -exec``; and every command in a script handed to ``bash -c``,
+    ``sh -c``, ``eval``, ``su -c``, ``env -S`` or ``watch``, including the
+    code in ``$(...)`` and backticks, even quoted. Scripts are split the way a
+    shell splits them (see :func:`_lex`). A script file (``bash submit.sh``),
+    a program's own code and commands fed on stdin are not looked into.
     """
     return list(_simple_command(list(tokens), 0))
 
 
 def _simple_command(words: list[str], depth: int):
     """The command names of one simple command (no separators in ``words``)."""
+    if depth > _MAX_DEPTH:
+        yield _TOO_DEEP
+        return
     i = 0
     while i < len(words) and (_ENV_ASSIGN.fullmatch(words[i]) or words[i] in _KEYWORDS):
         i += 1
-    if i < len(words) and depth <= _MAX_DEPTH:
+    if i < len(words):
         yield from _command_at(words, i, depth)
 
 
@@ -126,55 +179,234 @@ def _command_at(words: list[str], i: int, depth: int):
     yield name
     lowered = name.lower()
     if lowered in _SHELLS:
-        for j in range(i + 1, len(words) - 1):
-            # -c, or combined short options such as -lc / -ec
-            if words[j].startswith("-") and not words[j].startswith("--") and "c" in words[j][1:]:
-                yield from _script(words[j + 1], depth + 1)
-                break
+        yield from _shell(words, i, depth)
     elif lowered == "eval":
         yield from _script(" ".join(words[i + 1:]), depth + 1)
     elif lowered == "find":
-        for j in range(i + 1, len(words)):
+        j = i + 1
+        while j < len(words):
             if words[j] in ("-exec", "-execdir", "-ok", "-okdir"):
-                yield from _simple_command(words[j + 1:], depth + 1)
+                end = j + 1
+                while end < len(words) and words[end] not in (";", "+"):
+                    end += 1
+                yield from _simple_command(words[j + 1:end], depth + 1)
+                j = end
+            j += 1
     elif lowered in _WRAPPERS:
-        # Any later word may be the command that runs; one pass, so nested
-        # wrappers (`nohup timeout 60 sbatch`) add no work.
-        for j in range(i + 1, len(words)):
-            if words[j].startswith("-") or _ENV_ASSIGN.fullmatch(words[j]):
-                continue
-            inner = os.path.basename(words[j]).lower()
-            if inner in _SHELLS or inner in ("eval", "find"):
-                yield from _command_at(words, j, depth + 1)
-            else:
-                yield os.path.basename(words[j])
+        yield from _wrapped(words, i, depth)
 
 
-def _script(text: str, depth: int):
-    """The command names in shell code."""
-    for piece in _SUBSTITUTION.split(text):
-        for words in _commands(piece.replace("\n", ";")):
-            yield from _simple_command(words, depth)
+def _shell(words: list[str], i: int, depth: int):
+    """The script a shell runs with ``-c``: its first plain word after the options."""
+    has_c, j = False, i + 1
+    while j < len(words):
+        word = words[j]
+        if word == "--":
+            j += 1
+            break
+        if word in _SHELL_VALUE_OPTIONS:
+            j += 2
+            continue
+        if len(word) > 1 and word[0] in "-+":
+            if not word.startswith("--") and "c" in word[1:]:
+                has_c = True  # -c, or a cluster such as -lc / -ec
+            j += 1
+            continue
+        break
+    if has_c and j < len(words):
+        yield from _script(words[j], depth + 1)
 
 
-def _commands(code: str) -> list[list[str]]:
-    """The words of each command in ``code``, split at the shell's operators.
-
-    Quotes are respected. Where a substitution split cut a quote in two, the
-    words are split at operators and spaces regardless, quote marks dropped.
-    """
-    lexer = shlex.shlex(code, posix=True, punctuation_chars=True)
-    try:
-        tokens = list(lexer)
-    except ValueError:
-        tokens = [w.strip("'\"") for w in re.split(r"([;&|()<>]+|\s+)", code) if w.strip()]
-    commands: list[list[str]] = [[]]
-    for token in tokens:
-        if token and set(token) <= set(";&|()<>"):
-            commands.append([])
+def _wrapped(words: list[str], i: int, depth: int):
+    """What a wrapper runs: the command after its options and leading plain words,
+    or the command line in a script option (``su -c '...'``)."""
+    name = os.path.basename(words[i]).lower()
+    values, plain = _WRAPPERS[name]
+    scripts = _SCRIPT_OPTIONS.get(name, frozenset())
+    j, options = i + 1, True
+    while j < len(words):
+        word = words[j]
+        if options and word == "--":
+            options = False
+        elif options and len(word) > 1 and word.startswith("-"):
+            option, eq, value = word.partition("=")
+            if option in scripts:
+                yield from _script(value if eq else (words[j + 1] if j + 1 < len(words) else ""), depth + 1)
+                return
+            if name == "command" and option in ("-v", "-V"):
+                return  # it only looks the command up
+            if option in values and not eq:
+                j += 1  # the option's value is the next word
+        elif name == "env" and _ENV_ASSIGN.fullmatch(word):
+            pass
+        elif plain:
+            plain -= 1
         else:
-            commands[-1].append(token)
-    return [words for words in commands if words]
+            break
+        j += 1
+    if j < len(words):
+        if name in _JOINED:
+            yield from _script(" ".join(words[j:]), depth + 1)
+        else:
+            yield from _simple_command(words[j:], depth + 1)
+
+
+def _script(code: str, depth: int):
+    """The command names in shell code, its substitutions included."""
+    if depth > _MAX_DEPTH:
+        yield _TOO_DEEP
+        return
+    commands, substitutions = _lex(code)
+    for words in commands:
+        yield from _simple_command(words, depth)
+    for inner in substitutions:
+        yield from _script(inner, depth + 1)
+
+
+#: Characters that end a command outside quotes.
+_SEPARATORS = frozenset(";&|(){}\n")
+
+
+def _lex(code: str) -> tuple[list[list[str]], list[str]]:
+    """Split shell code into the words of each command, as a POSIX shell would.
+
+    Commands end at ``;``, ``&``, ``|``, parentheses, braces and newlines outside
+    quotes. A ``#`` that starts a word comments out the rest of its line, a
+    backslash-newline joins two lines, ``${...}`` stays one word, a
+    redirection's target (``> out``, ``2>&1``) is no word of the command, and a
+    here-document's lines are skipped. The code of every ``$(...)`` and backtick
+    substitution, quoted or not, comes back separately. An unclosed quote or
+    bracket runs to the end.
+    """
+    commands: list[list[str]] = [[]]
+    substitutions: list[str] = []
+    heredocs: list[tuple[str, bool]] = []  # (delimiter, leading tabs stripped)
+    word: list[str] = []
+    started = False  # a word is open (it may still be empty, as in '')
+    target = ""  # the open word: "" a command's, ">" a redirection target, "<<"/"<<-" a here-doc delimiter
+    quote = ""
+    i, n = 0, len(code)
+
+    def finish() -> None:
+        nonlocal word, started, target
+        if started:
+            text = "".join(word)
+            if not target:
+                commands[-1].append(text)
+            elif target != ">":
+                heredocs.append((text, target == "<<-"))
+        word, started, target = [], False, ""
+
+    while i < n:
+        c = code[i]
+        if quote == "'":
+            if c == "'":
+                quote = ""
+            else:
+                word.append(c)
+            i += 1
+            continue
+        if c == "`" or (c == "$" and code.startswith("(", i + 1)):
+            start = i + 1 if c == "`" else i + 2
+            end = code.find("`", start) if c == "`" else _closing(code, start, "(", ")")
+            end = n if end < 0 else end
+            substitutions.append(code[start:end])
+            word.append("$")  # keeps `x=$(...)` an assignment
+            started = True
+            i = end + 1
+            continue
+        if quote == '"':
+            if c == '"':
+                quote = ""
+            elif c == "\\" and i + 1 < n:
+                i += 1
+                word.append(code[i])
+            else:
+                word.append(c)
+            i += 1
+            continue
+        if c == "\\":
+            if i + 1 < n and code[i + 1] != "\n":
+                word.append(code[i + 1])
+                started = True
+            i += 2
+            continue
+        if c in "'\"":
+            quote, started = c, True
+        elif c == "$" and code.startswith("{", i + 1):
+            end = _closing(code, i + 2, "{", "}")
+            word.append(code[i:end + 1])
+            started = True
+            i = end + 1
+            continue
+        elif c == "#" and not started:
+            end = code.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        elif c in " \t\r":
+            finish()
+        elif c in "<>" or (c == "&" and code.startswith(">", i + 1)):
+            finish()
+            start = i
+            while i < n and code[i] in "<>&|-":
+                i += 1
+            op = code[start:i]
+            target = op[:3] if op.startswith("<<-") else op[:2] if op.startswith("<<") and op != "<<<" else ">"
+            while i < n and code[i] in " \t":
+                i += 1
+            continue
+        elif c in _SEPARATORS:
+            finish()
+            if commands[-1]:
+                commands.append([])
+            if c == "\n" and heredocs:
+                i = _skip_heredocs(code, i + 1, heredocs)
+                heredocs.clear()
+                continue
+        else:
+            word.append(c)
+            started = True
+        i += 1
+    finish()
+    return [words for words in commands if words], substitutions
+
+
+def _closing(code: str, start: int, opening: str, closing: str) -> int:
+    """Index of the ``closing`` bracket that ends one opened just before ``start``."""
+    depth, quote, i = 1, "", start
+    while i < len(code):
+        c = code[i]
+        if quote:
+            if c == quote:
+                quote = ""
+            elif c == "\\" and quote == '"':
+                i += 1
+        elif c in "'\"":
+            quote = c
+        elif c == "\\":
+            i += 1
+        elif c == opening:
+            depth += 1
+        elif c == closing:
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return len(code)
+
+
+def _skip_heredocs(code: str, start: int, heredocs: list[tuple[str, bool]]) -> int:
+    """Where the code goes on after the here-documents that begin at ``start``."""
+    pos = start
+    for delimiter, tabs in heredocs:
+        while pos < len(code):
+            end = code.find("\n", pos)
+            end = len(code) if end < 0 else end
+            line = code[pos:end].rstrip("\r")
+            pos = end + 1
+            if (line.lstrip("\t") if tabs else line) == delimiter:
+                break
+    return pos
 
 
 def remote_user(spec: ConnSpec, cluster: Cluster) -> str:

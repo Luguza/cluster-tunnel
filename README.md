@@ -482,14 +482,18 @@ By default only the **first word** counts, so `bash -c 'cd run && sbatch job.sh'
 `timeout 60 srun …` pass unchecked. Set `guard_scope: every-command` in a cluster's
 `budget` to have the guard look wherever a command can start:
 
-- in a script given to `bash -c`, `sh -c` or `eval`: after `;`, `&&`, `||`, `|`, `&` and
-  newlines, and inside `$(…)` and backticks (even quoted ones; quoted text otherwise is
-  not a command);
-- after wrappers such as `env`, `nohup`, `timeout`, `nice`, `xargs`, `flock` or `sudo`;
+- in a script given to `bash -c`, `sh -c`, `eval`, `su -c`, `env -S` or `watch`, or the
+  command line of `ssh <host>`: after `;`, `&&`, `||`, `|`, `&`, braces and newlines, and
+  inside `$(…)` and backticks, even quoted ones. Comments, here-documents, redirection
+  targets and other quoted text are not commands;
+- the command a wrapper such as `env`, `nohup`, `timeout`, `nice`, `xargs`, `flock` or
+  `sudo` runs, after the wrapper's own options and arguments (`timeout 30 grep sbatch log`
+  runs grep, not sbatch);
 - after `find -exec`.
 
-Where in doubt it checks rather than lets through. It can't see into a script file run as
-`bash submit_all.sh`; a command like that is not recognized as a submission.
+A command nested too deeply to follow counts as a submission. The guard can't see into a
+script file (`bash submit_all.sh`, `./submit.sh`), a program's own code, or commands fed
+on stdin.
 
 The default metric is **job-hours**: the Slurm job *wall-clock* time you have run since the
 session started, counting only the portion of each job inside the session window (concurrent
