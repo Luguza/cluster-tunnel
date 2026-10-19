@@ -115,7 +115,7 @@ class TunnelCommandsMixin:
         rows = [
             row.as_dict()
             for row in api.status(
-                self.target, usage=bool(self.target), config=config, config_path=self.config_path
+                self.target or None, usage=bool(self.target), config=config, config_path=self.config_path
             )
         ]
 
@@ -188,7 +188,7 @@ class TunnelCommandsMixin:
         if self.target:
             self.resolve_cluster(config)  # validate the target
 
-        closed = api.logout(self.target, config=config, config_path=self.config_path)
+        closed = api.logout(self.target or None, config=config, config_path=self.config_path)
         if not closed:
             click.echo("No clusters configured. Run `ctun config --init`.")
             return

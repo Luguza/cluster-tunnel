@@ -521,3 +521,13 @@ def test_every_command_scope_blocks_a_submission_inside_bash_c(tmp_path: Path, m
 
     info = json.loads(_invoke("-t", "c", "info", "--json").output)
     assert info["budget"]["guard_scope"] == "every-command"
+
+
+@pytest.mark.parametrize("command", ["status", "logout", "jobs"])
+def test_an_empty_target_means_every_cluster(tmp_path: Path, monkeypatch, command: str) -> None:
+    # `ctun -t "$UNSET" status` acted on every cluster in 0.6.0, as `if self.target:` saw no target.
+    _config(tmp_path, monkeypatch)
+    _tunnel(monkeypatch, False)
+    r = _invoke("-t", "", command)
+    assert r.exit_code == 0, r.output
+    assert "localhost" in _norm(r)

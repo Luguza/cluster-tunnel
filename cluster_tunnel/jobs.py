@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from cluster_tunnel import ssh
+from cluster_tunnel import constants, ssh
 from cluster_tunnel.ssh import ConnSpec
 
 PACKAGE_DIR = Path(__file__).parent
@@ -95,7 +95,9 @@ def query(spec: ConnSpec, user: str | None, since_minutes: int) -> list[Job]:
     accounting and returns only the live queue. Raises :class:`RuntimeError` if
     the probe cannot run (e.g. no ``squeue`` on the host).
     """
-    res = ssh.feed_script(spec, SCRIPT_PATH, [user or "", since_minutes])
+    res = ssh.feed_script(
+        spec, SCRIPT_PATH, [user or "", since_minutes], timeout=constants.PROBE_TIMEOUT
+    )
     if res.returncode != 0:
         detail = (res.stderr or "").strip() or f"probe exited {res.returncode}"
         raise RuntimeError(detail)

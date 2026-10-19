@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from cluster_tunnel import config as config_mod
-from cluster_tunnel import session, ssh
+from cluster_tunnel import constants, session, ssh
 from cluster_tunnel.config import Cluster, Config
 from cluster_tunnel.ssh import ConnSpec
 
@@ -181,7 +181,7 @@ def remote_user(spec: ConnSpec, cluster: Cluster) -> str:
     """The cluster username: from config, else queried over the tunnel."""
     if cluster.user:
         return cluster.user
-    res = ssh.capture(spec, ["id", "-un"])
+    res = ssh.capture(spec, ["id", "-un"], timeout=constants.PROBE_TIMEOUT)
     if res.returncode != 0:
         raise RuntimeError(res.stderr.strip() or "could not determine remote user")
     return res.stdout.strip()

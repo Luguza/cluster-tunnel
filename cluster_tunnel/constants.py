@@ -30,6 +30,10 @@ DEFAULT_CONTROL_PERSIST = "12h"
 DEFAULT_SERVER_ALIVE_INTERVAL = 60
 DEFAULT_SERVER_ALIVE_COUNT_MAX = 3
 
+#: Seconds a probe over the tunnel (budget usage, job list, remote user) may take;
+#: a probe that takes longer fails like any other (budget: per ``fail_mode``).
+PROBE_TIMEOUT = 120
+
 #: What to do when a budget probe errors: "closed" blocks, "open" allows.
 DEFAULT_FAIL_MODE = "closed"
 

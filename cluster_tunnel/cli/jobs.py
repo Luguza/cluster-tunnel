@@ -86,7 +86,7 @@ class JobsCommandsMixin:
         results = [
             entry.as_dict()
             for entry in api.jobs(
-                self.target, since_minutes=since_minutes, config=config, config_path=self.config_path
+                self.target or None, since_minutes=since_minutes, config=config, config_path=self.config_path
             )
         ]
 

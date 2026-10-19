@@ -493,3 +493,56 @@ def test_pin_host_key_pins_nothing_when_the_config_cant_be_edited(tmp_path: Path
     _forbid(monkeypatch, "cluster_tunnel.hostkey.pin")
     with pytest.raises(api.ConfigError, match="cannot pin the host key"):
         api.pin_host_key("bw", "SHA256:a", config_path=p)
+
+
+# --- review fixes: config errors, empty commands, stdin, probe timeouts ----------
+
+
+@pytest.mark.parametrize("raw", [b"- a\n- b\n", b"just text\n", b"clusters:\n  c:\n    host: \xff\n"])
+def test_every_broken_config_is_a_config_error(tmp_path: Path, raw: bytes) -> None:
+    p = tmp_path / "config.yaml"
+    p.write_bytes(raw)
+    with pytest.raises(api.ConfigError, match="invalid config"):
+        api.load_config(p)
+
+
+def test_an_empty_command_is_refused(cfg: Path, monkeypatch) -> None:
+    _forbid(monkeypatch, "cluster_tunnel.ssh.is_live")
+    with pytest.raises(ValueError, match="empty"):
+        api.run("c", [])
+    with pytest.raises(ValueError, match="empty"):
+        api.preflight("c", [])
+
+
+def test_captured_commands_read_nothing(cfg: Path, monkeypatch) -> None:
+    # A program embedding the API (e.g. a terminal UI) keeps its own stdin.
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ssh.capture(api.connection("c"), ["hostname"])
+    assert seen["stdin"] is subprocess.DEVNULL
+
+
+def test_probes_are_bounded(cfg: Path, tmp_path: Path, monkeypatch) -> None:
+    from cluster_tunnel import budget as budget_mod
+    from cluster_tunnel import constants
+    from cluster_tunnel import jobs as jobs_mod
+
+    timeouts: list = []
+
+    def fake_run(argv, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        return subprocess.CompletedProcess(argv, 0, "u\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    spec = api.connection("d")
+    script = tmp_path / "probe.sh"
+    script.write_text("echo 1\n", encoding="utf-8")
+    budget_mod.remote_user(spec, api.load_config().clusters["d"])
+    ssh.probe(spec, script, 0, "u")
+    jobs_mod.query(spec, "u", 0)
+    assert timeouts == [constants.PROBE_TIMEOUT] * 3

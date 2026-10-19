@@ -17,7 +17,7 @@ from pathlib import Path, PurePath, PurePosixPath
 from typing import IO, Optional
 
 from cluster_tunnel import config as config_mod
-from cluster_tunnel import paths, wsl
+from cluster_tunnel import constants, paths, wsl
 from cluster_tunnel.config import Config
 
 
@@ -241,13 +241,14 @@ def captured(
     Output is decoded as UTF-8 explicitly: the platform default (cp1252 on most
     Windows machines) would garble or reject non-ASCII text from the cluster. A
     missing launcher (no ssh, or no wsl.exe on Windows) comes back as exit code
-    127, and a ``timeout`` as exit code 124, instead of an exception.
+    127, and a ``timeout`` as exit code 124, instead of an exception. Without a
+    ``stdin`` the command reads nothing, so it can't take the caller's input.
     """
     full = wsl.launch(argv, spec.wsl_distro)
     try:
         return subprocess.run(
             full,
-            stdin=stdin,
+            stdin=subprocess.DEVNULL if stdin is None else stdin,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -334,4 +335,6 @@ def probe(
     Passes positional args ``<start_epoch> <cluster> <user>`` to the script and
     captures its stdout/stderr. The caller interprets the result.
     """
-    return feed_script(spec, script_path, [start_epoch, spec.name, user])
+    return feed_script(
+        spec, script_path, [start_epoch, spec.name, user], timeout=constants.PROBE_TIMEOUT
+    )

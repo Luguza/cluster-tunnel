@@ -30,7 +30,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Union
 
-import pydantic
 import yaml
 
 from cluster_tunnel import budget as budget_mod
@@ -195,7 +194,9 @@ def load_config(config_path: Optional[PathLike] = None) -> Config:
         return config_mod.load_config(_path_arg(config_path))
     except FileNotFoundError as exc:
         raise ConfigError(str(exc)) from exc
-    except (pydantic.ValidationError, yaml.YAMLError) as exc:
+    except (ValueError, TypeError, OSError, yaml.YAMLError) as exc:
+        # ValueError covers pydantic's errors and a file that isn't UTF-8;
+        # TypeError a YAML document that isn't a mapping.
         path = config_mod.resolve_config_path(_path_arg(config_path))
         raise ConfigError(f"invalid config {path}: {exc}") from exc
 
@@ -682,6 +683,8 @@ def _names(config: Config, cluster: Optional[str]) -> list[str]:
 def _tokens(command: Sequence[str]) -> list[str]:
     if isinstance(command, str):
         raise TypeError("command is an argv list, e.g. ['squeue', '--me'], not a string")
+    if not command:
+        raise ValueError("command is empty (ssh would open a login shell)")
     return list(command)
 
 
