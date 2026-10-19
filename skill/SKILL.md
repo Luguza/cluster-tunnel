@@ -106,6 +106,8 @@ patterns, and the budget guard explained.
   limits, and prefer batch jobs over idle interactive allocations.
 - **Never save a note without the user's explicit yes** to its exact text (see
   below).
+- **Never change a job's project or note after submission without the user's
+  explicit yes** to the exact change. Show them the `ctun jobs edit` command first.
 
 ## Remembering what you learn: `ctun note`
 
@@ -136,6 +138,7 @@ ctun -t haicore run -- sbatch train.sh   # submit a batch job (budget-checked)
 ctun -t haicore run -- sacct -j 12345    # inspect a finished/running job
 ctun -t haicore run -n -- sbatch big.sh  # -n/--dry-run: show the budget decision, don't submit
 ctun -t haicore run --project htfm --note "why this run" -- sbatch train.sh  # job record for the human
+ctun -t haicore jobs edit 12345 --project htfm/mh  # change it, ONLY after the user approved it
 ctun -t haicore upload ./data $WORK/data # copy local -> cluster (rsync, no re-auth)
 ctun -t haicore download out/run.log .   # copy cluster -> local
 ctun -t haicore logs                     # commands sent to this cluster this session
@@ -159,7 +162,8 @@ Tips:
 - Every submission gets a job record on the cluster. Give `--project` to group
   it. Put only facts from this session into `--note`, mark references as
   `commit:<hash>` / `job:<id>`, and leave the note out when unsure; the human
-  reviews it. Details in [reference.md](reference.md#job-records).
+  reviews it. Details in [reference.md](reference.md#job-records). A job note
+  belongs to one job; it is not a cluster note (`ctun note`).
 - After submitting a job, don't poll `squeue` by hand — set up a live monitor
   that wakes you on state changes and failures: see
   [monitoring-jobs.md](monitoring-jobs.md).

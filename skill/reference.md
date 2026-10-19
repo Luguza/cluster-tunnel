@@ -8,7 +8,8 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 
 - Invocation shape and global options
 - `status` — tunnel + session state
-- `jobs` — Slurm job overview
+- `jobs list` — Slurm job overview
+- `jobs edit` — change jobs' project or note
 - `info` — cluster briefing
 - `note` — record a fact about a cluster (after the user approves)
 - `login` — authenticate and open the tunnel
@@ -54,15 +55,17 @@ cluster — never for the all-clusters overview, to avoid slow remote probes),
 command count, and the time of the last command. Use this first whenever you
 lack context.
 
-## `jobs` — Slurm job overview
+## `jobs list` — Slurm job overview
 
 ```
-ctun jobs                    # all clusters with a live tunnel
-ctun -t <cluster> jobs       # one cluster
-ctun jobs --since 6h         # widen/narrow the finished-job window (default 24h)
-ctun jobs --since 0          # live queue only (no finished jobs)
-ctun -t <cluster> jobs -j    # machine-readable JSON
+ctun jobs list                    # all clusters with a live tunnel
+ctun -t <cluster> jobs list       # one cluster
+ctun jobs list --since 6h         # widen/narrow the finished-job window (default 24h)
+ctun jobs list --since 0          # live queue only (no finished jobs)
+ctun -t <cluster> jobs list -j    # machine-readable JSON
 ```
+
+Plain `ctun jobs` only prints the help of the `jobs` group.
 
 A quick overview of **your** jobs — running and pending (from `squeue`), plus
 jobs that **finished recently** (from `sacct`, within `-s/--since`, default
@@ -81,9 +84,33 @@ of a *single* job as it changes state, use `Monitor` (see
 With `--json`, each cluster entry names its `slurm_cluster`: Slurm's own
 `ClusterName`, which jobs see as `SLURM_CLUSTER_NAME` (`null` when unknown or the
 tunnel is down). Each job carries its `record` (see [Job records](#job-records), or
-`null`), and each cluster entry lists `records_without_job`: records written in
-the window whose job is no longer listed. `records_error` reports a failure to
+`null`), and each cluster entry lists `records_without_job`: records written or
+changed in the window whose job is no longer listed. `records_error` reports a failure to
 read the records; the jobs are still listed.
+
+## `jobs edit` — change jobs' project or note
+
+```
+ctun -t <cluster> jobs edit <id> --project htfm/mh --note "…"   # change project and note
+ctun -t <cluster> jobs edit <id> <id>... --project htfm/new     # the same change for several jobs
+ctun -t <cluster> jobs edit <id> --project "" --note ""         # clear: Unassigned, no note
+ctun -t <cluster> jobs edit <id> --confirm-note                 # the human confirmed the note
+```
+
+Changes each job's [record](#job-records) on the cluster, so every machine and
+the VS Code extension see the change, and prints the resulting records as a
+JSON list. With several jobs it stops at the first that fails; the jobs before
+it keep their change, and running the fixed command again leaves them as they
+are.
+To read records without changing them, use `jobs list --json`; widen `--since` for
+older jobs. A `/` in a project nests it. A new note is
+unconfirmed until `--confirm-note`, and its references are checked as in `run`
+(exit code 13). Each edit appends `{at, from, <field>: [old, new]}` to the
+record's `changes`; the facts from submit time are never changed. A job that has
+no record yet (e.g. one submitted with plain `sbatch`) gets one without facts;
+ctun refuses a job that Slurm doesn't know.
+
+**Only change a job after the user's explicit yes** to the exact command.
 
 ## `info` — cluster briefing
 
@@ -171,14 +198,17 @@ ctun -t haicore run -- bash -c 'cd $WORK && sbatch job.sh'
 
 For every `Submitted batch job <N>` line in the output, `run` stores a
 **job record** on the cluster, in `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`.
-Every machine that submits to that cluster sees the same records. A record is
-written once and never changed. It holds:
+Every machine that submits to that cluster sees the same records. It holds:
 
 - `--project NAME` and `--note TEXT`, if given (both optional);
 - facts ctun collects itself, never from you: the job's name and working
   directory (from Slurm), and the git state there at submit time (`commit`,
   `branch`, `pushed`, `uncommitted` files), plus the command, the submitting
-  host and the time.
+  host and the time;
+- `note_confirmed`, true once the human confirmed the note, and `changes`, the
+  log of later edits (see [`jobs edit`](#jobs-edit--change-jobs-project-or-note)).
+
+The project and note can be changed later with `ctun jobs edit`; the facts never.
 
 A fact ctun cannot read is stored as `null` with a warning; it never blocks the
 submission. The command's output and exit code are unchanged. Records are off

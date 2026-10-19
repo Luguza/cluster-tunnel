@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# jobs.sh — ctun job-overview probe. Lists the user's Slurm jobs so `ctun jobs`
+# jobs.sh — ctun job-overview probe. Lists the user's Slurm jobs so `ctun jobs list`
 # can render them locally. Emits one pipe-delimited line per job on stdout:
 #
 #   <source>|<jobid>|<state>|<elapsed>|<timelimit>|<partition>|<nodes>|<start>|<name>

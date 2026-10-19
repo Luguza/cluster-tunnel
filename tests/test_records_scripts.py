@@ -75,6 +75,16 @@ def test_list_without_records_is_empty(tmp_path: Path, bash: str) -> None:
     assert result.returncode == 0 and result.stdout == ""
 
 
+def test_update_overwrites_a_record_and_creates_a_missing_one(tmp_path: Path, bash: str) -> None:
+    assert _run(bash, tmp_path, "records.sh", "write", "101", _b64({"job_id": "101"})).returncode == 0
+    assert _run(bash, tmp_path, "records.sh", "update", "101", _b64({"job_id": "101", "note": "x"})).returncode == 0
+    assert _run(bash, tmp_path, "records.sh", "update", "102", _b64({"job_id": "102"})).returncode == 0
+    listed = _run(bash, tmp_path, "records.sh", "list", "0", "101", "102").stdout.splitlines()
+    assert [json.loads(line) for line in listed] == [{"job_id": "101", "note": "x"}, {"job_id": "102"}]
+    folder = tmp_path / "home" / ".ctun" / "jobs" / "haic"
+    assert sorted(path.name for path in folder.iterdir()) == ["101.json", "102.json"]  # no temp files left
+
+
 def test_all_with_an_empty_folder_is_empty(tmp_path: Path, bash: str) -> None:
     (tmp_path / "home" / ".ctun" / "jobs" / "haic").mkdir(parents=True)
     result = _run(bash, tmp_path, "records.sh", "all")

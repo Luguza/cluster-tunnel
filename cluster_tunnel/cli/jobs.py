@@ -1,10 +1,13 @@
-"""Job overview across clusters: jobs."""
+"""Your jobs: the overview across clusters (jobs list) and changing their records (jobs edit)."""
 
 from __future__ import annotations
 
 import re
 
 import rich_click as click
+
+from cluster_tunnel.cli.errors import fail
+from cluster_tunnel.constants import ExitCode
 
 #: `--since` duration units expressed in minutes. A bare number is minutes.
 _SINCE_UNITS = {"m": 1, "h": 60, "d": 60 * 24, "w": 60 * 24 * 7}
@@ -78,24 +81,29 @@ def _attach_records(spec, entry: dict, since_minutes: int) -> None:
 
 
 class JobsCommandsMixin:
-    """Mixin providing the `jobs` command."""
+    """Mixin providing the `jobs` group: `jobs list` and `jobs edit`."""
 
-    @click.command("jobs")
+    @click.group("jobs")
+    def jobs_command() -> None:
+        """Your Slurm jobs: list them, or give them a project or note."""
+
+    @jobs_command.command("list")
     @click.pass_obj
     @click.option(
         "-s", "--since", "since", default="24h", metavar="DURATION",
         help="Finished-job history window (e.g. 24h, 90m, 2d; 0 = active only).",
     )
     @click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
-    def jobs_command(self, since: str, as_json: bool) -> None:
-        """Show your Slurm jobs on the cluster(s): running, pending, recently finished.
+    def jobs_list_command(self, since: str, as_json: bool) -> None:
+        """List your Slurm jobs: running, pending, recently finished.
 
         With a target (`-t <cluster>`), reports that cluster; without one, sweeps
         every configured cluster and reports each with a live tunnel (down ones
         are noted, never logged in to). For each cluster a bundled probe runs
         `squeue` (your running + pending jobs) and, unless `--since 0`, `sacct`
         (jobs that finished within the window) on the login node over the live
-        tunnel — read-only, so it is never budget-guarded.
+        tunnel — read-only, so it is never budget-guarded. `--json` includes
+        each job's record.
         """
         from cluster_tunnel import jobs as jobs_mod
         from cluster_tunnel import ssh
@@ -134,6 +142,58 @@ class JobsCommandsMixin:
             return
 
         self._render_jobs(results, since_minutes)
+
+    @jobs_command.command("edit")
+    @click.pass_obj
+    @click.argument("job_ids", nargs=-1, required=True, metavar="JOB_ID...")
+    @click.option("--project", default=None, help='New project; "" for Unassigned.')
+    @click.option("--note", default=None, help='New note, unconfirmed until --confirm-note; "" removes it.')
+    @click.option("--confirm-note", is_flag=True, help="Confirm the note: a human has reviewed it.")
+    def jobs_edit_command(self, job_ids: tuple[str, ...], project: str | None, note: str | None, confirm_note: bool) -> None:
+        """Give one or more jobs the same project or note.
+
+        Each change is stored in the job's record on the cluster, so every
+        machine sees it. Prints the changed records as JSON. Stops at the first
+        job that fails; running the command again is safe.
+
+        Example: ctun -t haicore jobs edit 51319 51322 --project htfm/mh
+        """
+        import json
+
+        from cluster_tunnel import notes, records, ssh
+        from cluster_tunnel.cli.execution import check_note
+
+        if project is None and note is None and not confirm_note:
+            raise click.UsageError("Give --project, --note or --confirm-note.")
+
+        config = self.load_config()
+        name, cluster = self.resolve_cluster(config)
+        spec = ssh.conn_spec(config, name)
+        if not ssh.is_live(spec):
+            fail(f"No live tunnel for '{name}'. Run `ctun -t {name} login` first.", ExitCode.LOGIN_REQUIRED)
+        if not cluster.job_records:
+            raise click.ClickException(f"job_records is off for '{name}'.")
+
+        results = []
+        for job_id in job_ids:
+            try:
+                current = records.read(spec, job_id)
+                if current is None and notes.unknown_references(spec, f"job:{job_id}", None):
+                    raise click.ClickException(f"Job {job_id} is unknown on '{name}' (not in squeue or sacct).")
+                updated = records.edited(current, job_id, project=project, note=note, confirm_note=confirm_note)
+                if updated is not None:
+                    if note:
+                        check_note(spec, note, updated.get("project"), refused="Not saved")
+                    records.update(spec, updated)
+            except (RuntimeError, ValueError) as exc:
+                raise click.ClickException(str(exc)) from exc
+
+            if updated is None:
+                click.secho(f"ctun: job {job_id} already has these values", fg="bright_black", err=True)
+            else:
+                click.secho(f"ctun: updated job {job_id}", fg="bright_black", err=True)
+            results.append(updated or current)
+        click.echo(json.dumps(results, indent=2, ensure_ascii=False))
 
     def _render_jobs(self, results: list[dict], since_minutes: int) -> None:
         from rich.table import Table

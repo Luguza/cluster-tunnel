@@ -1,6 +1,6 @@
 """Job overview: run the bundled ``jobs.sh`` probe over the tunnel and parse it.
 
-``ctun jobs`` ships :data:`SCRIPT_PATH` to a cluster's login node via
+``ctun jobs list`` ships :data:`SCRIPT_PATH` to a cluster's login node via
 ``bash -s`` (see :func:`cluster_tunnel.ssh.feed_script`) and reads back one
 pipe-delimited line per job. This module owns the wire format — the field order,
 the split, and the active/finished ordering — so the CLI layer only renders.

@@ -77,7 +77,7 @@ class ExecutionCommandsMixin:
             )
 
         if note:
-            _check_note(spec, note, project)
+            check_note(spec, note, project, refused="Not run")
 
         tokens = list(command)
         config_path = config_mod.resolve_config_path(self.config_path)
@@ -152,17 +152,20 @@ class ExecutionCommandsMixin:
         raise SystemExit(returncode)
 
 
-def _check_note(spec, note: str, project: str | None) -> None:
-    """Refuse the run (exit 13) if ``note`` names a commit or job the cluster doesn't know."""
+def check_note(spec, note: str, project: str | None, *, refused: str) -> None:
+    """Fail with exit 13 if ``note`` names a commit or job the cluster doesn't know.
+
+    ``refused`` starts the error message, e.g. ``"Not run"``.
+    """
     from cluster_tunnel import notes
 
     try:
         unknown = notes.unknown_references(spec, note, project)
     except RuntimeError as exc:
-        fail(f"Not run: {exc}", ExitCode.NOTE_REFERENCE_INVALID)
+        fail(f"{refused}: {exc}", ExitCode.NOTE_REFERENCE_INVALID)
     if unknown:
         fail(
-            "Not run: the note names references the cluster does not know: "
+            f"{refused}: the note names references the cluster does not know: "
             + ", ".join(unknown)
             + ".\n  Commit references are looked up in the repos of this project's earlier"
             " records. Fix or drop them, or leave the note out.",

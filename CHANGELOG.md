@@ -10,15 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Job records.** For each `Submitted batch job <N>` in its output, `ctun run`
-  stores a write-once record on the cluster in
+  stores a record on the cluster in
   `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`, so every machine sees it. It holds
   the new optional `--project` and `--note`, and facts ctun collects itself: job
   name and working directory from Slurm, and the git commit, branch, pushed
   state and uncommitted files there at submit time. A failing fact only warns.
-  `ctun jobs --json` attaches each job's `record` and lists
+  `ctun jobs list --json` attaches each job's `record` and lists
   `records_without_job` per cluster. Turn it off per cluster with
   `job_records: false`.
-- `ctun jobs --json` names each cluster's Slurm `ClusterName` in
+- `ctun -t <cluster> jobs edit <id>...` with `--project`, `--note` or
+  `--confirm-note` gives one or more jobs' records the same change on the
+  cluster, so every machine and agent sees it, and prints the resulting records
+  as a JSON list. An empty value
+  clears it (Unassigned, no note). A changed note is unconfirmed until
+  `--confirm-note`. Each edit is logged in the record's `changes` as old and
+  new value; the facts from submit time are never changed. For a job that has
+  no record (e.g. one submitted with plain `sbatch`), `jobs edit` creates one
+  without facts, so older jobs can join projects too. Records gain
+  `note_confirmed` and `changes`.
+- `ctun jobs list --json` names each cluster's Slurm `ClusterName` in
   `slurm_cluster`, the value jobs see as `SLURM_CLUSTER_NAME`, so a front end
   can match a job to tags like `slurm:<ClusterName>:<job id>`.
 - `ctun run --note` checks its `commit:<hash>` and `job:<id>` references before
@@ -34,9 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command (`→ job 4818213`), and `ctun logs --json` gives them as `job_ids`.
   Older logs still read.
 
+### Changed
+
+- **`ctun jobs` is now a group** of `jobs list` and `jobs edit`. To list your
+  jobs, run `ctun jobs list` (with `--since`, `--json` as before). Plain
+  `ctun jobs` only prints the group's help, and `ctun jobs --json` is a usage
+  error.
+
 ### Fixed
 
-- `ctun jobs --json` no longer drops every record of a cluster with "could not
+- `ctun jobs list --json` no longer drops every record of a cluster with "could not
   read the job records: exit code 1" when the last listed job has no record.
 
 ## [0.6.0] - 2026-10-14

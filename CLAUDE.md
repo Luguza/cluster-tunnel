@@ -49,7 +49,7 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
 - `notes.py` — `commit:<hash>` / `job:<id>` references in a `run --note`,
   checked on the cluster before the run (`scripts/note_refs.sh`).
 - `jobs.py` — job overview: parse the `scripts/jobs.sh` probe output into `Job`s
-  (used by the `jobs` command).
+  (used by `jobs list`).
 - `scripts/` — bundled universal probes shipped over the tunnel via `bash -s`
   (`jobs.sh` — squeue/sacct job overview; `records.sh`, `facts.sh`,
   `note_refs.sh` — job records).
@@ -66,7 +66,8 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
 the Rich-formatted help. One file per command domain:
 
 - `tunnel.py` — `login`, `status`, `logout`
-- `jobs.py` — `jobs` (Slurm job overview; grouped under Tunnel)
+- `jobs.py` — the `jobs` group: `jobs list` (Slurm job overview) and
+  `jobs edit` (change a job's record); grouped under Tunnel
 - `execution.py` — `run` (budget-guarded command execution)
 - `transfer.py` — `upload`, `download`
 - `context.py` — `info`, `note`, `logs` (the agent briefing)
@@ -88,7 +89,7 @@ the Rich-formatted help. One file per command domain:
 
 The VS Code extension that renders ctun's JSON (jobs, job records, notes) lives
 in its own repo, <https://github.com/aimat-lab/cluster-tunnel-vscode>; it talks to ctun only
-through the CLI, so keep `status -j`, `jobs --json` and `info --json` stable.
+through the CLI, so keep `status -j`, `jobs list --json` and `info --json` stable.
 
 ## Development
 

@@ -498,7 +498,7 @@ def test_jobs_renders_table(tmp_path: Path, monkeypatch) -> None:
     _patch_jobs(monkeypatch, jobs=[
         Job("active", "966737", "RUNNING", "14:44", "7:00:00", "booster", "1", "2026-10-13T14:02:11", "train.sh"),
     ])
-    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs"])
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "list"])
     assert r.exit_code == 0
     out = _norm(r)
     assert "966737" in out and "RUNNING" in out
@@ -507,7 +507,7 @@ def test_jobs_renders_table(tmp_path: Path, monkeypatch) -> None:
 def test_jobs_notes_down_tunnel(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     _patch_jobs(monkeypatch, live=False)
-    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs"])
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "list"])
     assert r.exit_code == 0
     assert "tunnel down" in _norm(r)
 
@@ -521,7 +521,7 @@ def test_jobs_json_shape(tmp_path: Path, monkeypatch) -> None:
     _patch_jobs(monkeypatch, jobs=[
         Job("done", "960652", "CANCELLED by 30927", "01:56:26", "07:00:00", "booster", "1", "2026-10-13T12:00:00", "r.sh"),
     ])
-    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "--since", "2h", "--json"])
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "list", "--since", "2h", "--json"])
     assert r.exit_code == 0
     payload = json.loads(r.output)
     assert payload["since_minutes"] == 120
@@ -536,14 +536,14 @@ def test_jobs_json_shape(tmp_path: Path, monkeypatch) -> None:
 def test_jobs_query_error_is_surfaced_not_fatal(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     _patch_jobs(monkeypatch, error="squeue not found")
-    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs"])
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "list"])
     assert r.exit_code == 0
     assert "could not query jobs" in _norm(r)
 
 
 def test_jobs_rejects_bad_since(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
-    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "--since", "bogus"])
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "list", "--since", "bogus"])
     assert r.exit_code != 0
     assert "invalid duration" in _norm(r)
 
