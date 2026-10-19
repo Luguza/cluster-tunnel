@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **License.** cluster-tunnel is now released under the MIT License (`LICENSE`), so
   it can be used as a dependency and redistributed.
+- **Python API.** `cluster_tunnel.api` offers each command as a function (`login`,
+  `logout`, `status`, `run`, `preflight`, `upload`, `download`, `jobs`), plus `budget`
+  (the guard's verdict for any submission, probed now), `feed_script`, `connection`
+  and `is_live`. `run` and the transfers can capture their output instead of
+  streaming it, `run` with a timeout. Failures raise `cluster_tunnel.errors`
+  exceptions; those with a stable exit code carry it (`LoginRequired` 10,
+  `BudgetExhausted` 11, `BudgetGuardError` 12). The API and `cluster_tunnel.errors`
+  are the public interface and follow semantic versioning.
+
+### Changed
+
+- `login`, `logout`, `status`, `jobs`, `run`, `upload` and `download` now run through
+  the Python API. Their output, exit codes and `ctun-error:` markers are unchanged;
+  new contract tests pin them, and every scenario is checked through both the CLI
+  and the API.
 
 ## [0.6.0] - 2026-10-14
 

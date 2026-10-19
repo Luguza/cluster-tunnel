@@ -116,3 +116,21 @@ def test_script_missing(tmp_path: Path, monkeypatch) -> None:
     _patch(monkeypatch, sess={"start_epoch": 0, "limit": 100, "unit": "core-hours"})
     d = budget.decide(c, "k", _spec(), ["sbatch", "j"], p)
     assert not d.allowed and "not found" in d.reason
+
+
+def test_check_is_decides_verdict_for_any_command(tmp_path: Path, monkeypatch) -> None:
+    # `check` judges the budget as it stands, without looking at a command:
+    # what `decide` concludes for a guarded one, even for a command it doesn't guard.
+    c, p = _config_with_budget(tmp_path, script=_dummy_script(tmp_path))
+    _patch(monkeypatch, sess={"start_epoch": 0, "limit": 100, "unit": "core-hours"}, probe_stdout="150\n")
+    d = budget.check(c, "k", _spec(), p)
+    assert not d.allowed and d.used == 150.0
+    assert d == budget.decide(c, "k", _spec(), ["sbatch", "j"], p)
+    assert budget.decide(c, "k", _spec(), ["bash", "submit_all.sh"], p).allowed
+
+
+def test_check_without_a_budget_section_allows(tmp_path: Path) -> None:
+    p = tmp_path / "config.yaml"
+    p.write_text("clusters:\n  k:\n    host: h\n", encoding="utf-8")
+    d = budget.check(cfg.load_config(str(p)), "k", _spec(), p)
+    assert d.allowed and d.reason == "no budget configured"

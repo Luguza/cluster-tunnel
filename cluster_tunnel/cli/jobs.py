@@ -75,30 +75,20 @@ class JobsCommandsMixin:
         (jobs that finished within the window) on the login node over the live
         tunnel — read-only, so it is never budget-guarded.
         """
-        from cluster_tunnel import jobs as jobs_mod
-        from cluster_tunnel import ssh
+        from cluster_tunnel import api
 
         since_minutes = _parse_since(since)
 
         config = self.load_config()
         if self.target:
             self.resolve_cluster(config)  # validate the target
-            names = [self.target]
-        else:
-            names = sorted(config.clusters)
 
-        results = []
-        for name in names:
-            cluster = config.clusters[name]
-            spec = ssh.conn_spec(config, name)
-            entry = {"cluster": name, "live": ssh.is_live(spec), "error": None, "jobs": []}
-            if entry["live"]:
-                try:
-                    jobs = jobs_mod.query(spec, cluster.user, since_minutes)
-                    entry["jobs"] = [j.as_dict() for j in jobs]
-                except Exception as exc:  # noqa: BLE001 — surface, don't abort the sweep
-                    entry["error"] = str(exc)
-            results.append(entry)
+        results = [
+            entry.as_dict()
+            for entry in api.jobs(
+                self.target, since_minutes=since_minutes, config=config, config_path=self.config_path
+            )
+        ]
 
         if as_json:
             import json

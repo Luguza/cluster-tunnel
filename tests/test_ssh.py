@@ -185,3 +185,43 @@ def test_sighup_wrapper_survives_exec() -> None:
         capture_output=True, text=True, encoding="utf-8",
     )
     assert res.stdout.strip() == "True", res.stderr
+
+
+def _timing_out(seen: dict):
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    return fake_run
+
+
+def test_capture_timeout_comes_back_as_exit_124(tmp_path: Path, monkeypatch) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    seen: dict = {}
+    monkeypatch.setattr(subprocess, "run", _timing_out(seen))
+    res = ssh.capture(spec, ["sleep", "100"], timeout=3)
+    assert seen["timeout"] == 3
+    assert res.returncode == 124 and "no answer after 3s" in res.stderr
+
+
+def test_feed_script_timeout_comes_back_as_exit_124(tmp_path: Path, monkeypatch) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    script = tmp_path / "probe.sh"
+    script.write_text("sleep 100\n", encoding="utf-8")
+    seen: dict = {}
+    monkeypatch.setattr(subprocess, "run", _timing_out(seen))
+    res = ssh.feed_script(spec, script, [], timeout=5)
+    assert seen["timeout"] == 5 and res.returncode == 124
+
+
+def test_capture_without_timeout_waits(tmp_path: Path, monkeypatch) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, "ok\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert ssh.capture(spec, ["true"]).stdout == "ok\n"
+    assert seen["timeout"] is None

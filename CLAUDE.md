@@ -24,6 +24,11 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
 
 ### `cluster_tunnel/` — the CLI package
 
+- `api.py` — the public Python API: one function per command (`login`, `status`,
+  `run`, `upload`, `jobs`, ...), returning dataclasses and raising `errors`. The
+  CLI commands parse options, call it and render the result.
+- `errors.py` — the API's exceptions; those `ctun` reports with a stable exit code
+  carry it (`exit_code`, `marker`).
 - `ssh.py` — OpenSSH ControlMaster wrapper; the persistent tunnel transport
   (open/close/liveness of the control socket, connection specs).
 - `wsl.py` — the Windows bridge (experimental): on Windows every `ssh`/`rsync`
@@ -90,6 +95,12 @@ Tests must not require a real cluster: `ssh` and the tkinter dialog subprocess
 are mocked/monkeypatched, and `test_cli.py` drives the CLI via Click's
 `CliRunner`. `test_version` asserts against `get_version()`, so it won't break on
 a version bump.
+
+Behaviour belongs in `api.py`; a command only parses, calls the API and renders.
+`test_cli_contract.py` pins what the commands do (exit codes, markers, messages,
+JSON, session and command-log effects) and `test_api_matches_cli.py` runs each
+scenario through the CLI and the API on the same stubs: both must keep passing
+unchanged when logic moves.
 
 ## Config schema (quick reference)
 

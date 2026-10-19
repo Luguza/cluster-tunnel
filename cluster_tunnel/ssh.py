@@ -183,7 +183,7 @@ def open_master(spec: ConnSpec, verbose: int = 0) -> int:
     return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
 
 
-def _captured(
+def captured(
     spec: ConnSpec,
     argv: list[str],
     stdin: Optional[IO[bytes]] = None,
@@ -219,7 +219,7 @@ def check(spec: ConnSpec) -> subprocess.CompletedProcess:
     Bounded by a timeout, so a WSL that hangs on Windows reads as "not live"
     instead of freezing ``status``, ``info`` or ``run``.
     """
-    return _captured(spec, check_argv(spec), timeout=wsl.QUICK_TIMEOUT)
+    return captured(spec, check_argv(spec), timeout=wsl.QUICK_TIMEOUT)
 
 
 def is_live(spec: ConnSpec) -> bool:
@@ -236,21 +236,29 @@ def run(spec: ConnSpec, tokens: list[str], *, tty: bool = False) -> int:
     return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
 
 
-def capture(spec: ConnSpec, tokens: list[str]) -> subprocess.CompletedProcess:
-    """Run a command over the tunnel and capture its output (no streaming)."""
-    return _captured(
-        spec, ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)]
+def capture(
+    spec: ConnSpec, tokens: list[str], timeout: Optional[float] = None
+) -> subprocess.CompletedProcess:
+    """Run a command over the tunnel and capture its output (no streaming).
+
+    After ``timeout`` seconds the local ssh is stopped and exit code 124 comes
+    back; the remote command may keep running on the cluster.
+    """
+    return captured(
+        spec,
+        ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)],
+        timeout=timeout,
     )
 
 
 def close(spec: ConnSpec) -> bool:
     """Cleanly tear down the master (`ssh -O exit`)."""
     argv = ["ssh", *_socket_opts(spec), "-O", "exit", spec.target]
-    return _captured(spec, argv, timeout=wsl.QUICK_TIMEOUT).returncode == 0
+    return captured(spec, argv, timeout=wsl.QUICK_TIMEOUT).returncode == 0
 
 
 def feed_script(
-    spec: ConnSpec, script_path: Path, args: list[object]
+    spec: ConnSpec, script_path: Path, args: list[object], timeout: Optional[float] = None
 ) -> subprocess.CompletedProcess:
     """Ship a local script over the tunnel and run it via `bash -s -- <args>`.
 
@@ -258,13 +266,16 @@ def feed_script(
     positional ``args`` are shell-quoted, so nothing installed on the cluster is
     required beyond ``bash``. stdout/stderr are captured for the caller to
     interpret. This is the shared transport for every ctun probe (budget usage,
-    job overview, ...).
+    job overview, ...). ``timeout`` works as in :func:`capture`.
     """
     quoted = " ".join(shlex.quote(str(a)) for a in args)
     remote = f"bash -s -- {quoted}" if quoted else "bash -s"
     with open(script_path, "rb") as fh:
-        return _captured(
-            spec, ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote], stdin=fh
+        return captured(
+            spec,
+            ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote],
+            stdin=fh,
+            timeout=timeout,
         )
 
 

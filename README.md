@@ -35,6 +35,7 @@ $ ctun -t horeka logout                 # close the tunnel
 - [Configuration](#-configuration)
 - [The compute-budget guard](#️-the-compute-budget-guard)
 - [Using ctun with coding agents](#-using-ctun-with-coding-agents)
+- [Python API](#-python-api)
 - [Files and locations](#-files-and-locations)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -481,6 +482,46 @@ BLOCKED on horeka: session budget exhausted: 503.2 >= 500.0 jobh. Command not su
 
 All agents must run `ctun` on the **same machine** where the tunnel was opened, since the
 control socket is local to that machine.
+
+---
+
+## 🐍 Python API
+
+Programs can call what `ctun` does directly. `cluster_tunnel.api` has a function for each
+command, and the commands themselves are built on it, so the tunnel check, the budget
+guard, the session and the command log behave exactly as on the command line.
+
+```python
+from cluster_tunnel import api
+
+if api.is_live("horeka"):
+    result = api.run("horeka", ["squeue", "--me"], capture=True)
+    print(result.exit_code, result.stdout)
+
+try:
+    api.run("horeka", ["sbatch", "train.sh"], capture=True)
+except api.LoginRequired:
+    ...  # a person runs `ctun -t horeka login`
+except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
+    print(exc.decision.reason)
+```
+
+| Function | Does what |
+|---|---|
+| `login`, `logout`, `status`, `is_live` | `ctun login`, `logout`, `status`; the tunnel state |
+| `run`, `preflight` | `ctun run` (streamed, or `capture=True` with an optional `timeout`) and `run -n` |
+| `upload`, `download` | `ctun upload`, `download` (optionally `capture=True`) |
+| `jobs` | `ctun jobs` |
+| `budget` | The guard's verdict for any submission right now, probed over the tunnel |
+| `feed_script` | Runs a local bash script on the login node; not guarded, for read-only probes |
+| `connection`, `clusters`, `load_config` | The resolved ssh target and control socket; the config |
+
+Failures raise `api.ClusterTunnelError` subclasses. The ones `ctun` reports with a stable
+exit code carry it as `exit_code` and `marker`: `LoginRequired` (10), `BudgetExhausted`
+(11) and `BudgetGuardError` (12). Each function reads the same config as `ctun`
+(`config_path=`, else `$CTUN_CONFIG`, else the default location) and, like `ctun`, must
+run on the machine that holds the tunnel. `cluster_tunnel.api` and `cluster_tunnel.errors`
+are the public interface and follow semantic versioning.
 
 ---
 

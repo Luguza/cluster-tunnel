@@ -112,6 +112,20 @@ def decide(
 
     if budget is None or not is_guarded(tokens, budget.guard_commands):
         return Decision(True, "not a guarded command")
+    return check(config, name, spec, config_path)
+
+
+def check(config: Config, name: str, spec: ConnSpec, config_path: Path) -> Decision:
+    """The session budget as it stands: may a job be submitted to `name` now?
+
+    What :func:`decide` concludes for a guarded command, without looking at a
+    command: probe the usage since the session started and compare it to the
+    session limit. A cluster without a ``budget`` section is never blocked.
+    """
+    cluster = config_mod.get_cluster(config, name)
+    budget = cluster.budget
+    if budget is None:
+        return Decision(True, "no budget configured")
 
     sess = session.load(name)
     limit = sess.get("limit") if sess else None
