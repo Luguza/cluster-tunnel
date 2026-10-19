@@ -261,6 +261,26 @@ $ ctun -t horeka login [-i|--interactive] [-l|--limit N] [--timeout S]
 A **session** lasts for the lifetime of one authentication. Logging in again (after the
 tunnel drops) starts a fresh session and resets the budget window.
 
+### `hostkey` — check and pin the server's host key
+
+```console
+$ ctun -t horeka hostkey              # the key the server presents, and whether it is pinned
+$ ctun -t horeka hostkey -j|--json    # machine-readable
+$ ctun -t horeka hostkey --pin        # pin it: shows the change, asks first (-y/--yes: don't ask)
+```
+
+Until a key is pinned, logins accept the server's key on first contact (ssh's
+`StrictHostKeyChecking=accept-new`), which trusts whoever answers the first time.
+`hostkey` fetches the key over a fresh connection that stops before logging in, so it
+needs no password or OTP. Compare the fingerprint it shows with the one your cluster's
+operators publish; then `--pin` stores the key in ctun's own known_hosts file and sets
+`strict_host_key_checking: 'yes'` and `known_hosts_file` in the cluster's config entry
+(keeping `config.yaml.bak`). From then on a login refuses any other key.
+
+`hostkey` exits 1 when the server presents a different key than the pinned one: a
+re-keyed server, or someone in between. Find out which before logging in; a changed key
+can only be re-pinned from a terminal (`--yes` does not apply to it).
+
 ### `run` — run a command through the tunnel
 
 ```console
@@ -396,6 +416,8 @@ clusters:
     user: ab1234                  # your username on the cluster
     ssh_alias: horeka             # optional: reuse a Host block from ~/.ssh/config instead of host/user
     identity_file: ~/.ssh/horeka  # optional: SSH key to use
+    strict_host_key_checking: 'yes'   # set by `ctun hostkey --pin`; default: accept-new
+    known_hosts_file: ~/.config/cluster-tunnel/known_hosts   # where the pinned key is kept
     control_persist: "24h"        # optional per-cluster override
 
     description:                  # notes for the agent, shown by `ctun info` (or one string)
@@ -417,6 +439,11 @@ clusters:
 
 **Connecting:** if `ssh_alias` is set, `ctun` uses that `~/.ssh/config` Host entry for the
 hostname, user, and key; otherwise it uses `host` + `user` (+ optional `identity_file`).
+
+**Host keys:** `strict_host_key_checking` is `accept-new` unless you pin the cluster's key
+with `ctun hostkey --pin`, which sets it to `'yes'` together with `known_hosts_file`. With
+`'yes'`, a login accepts only a key in `known_hosts_file` (or, if that is unset, in ssh's
+own known_hosts). These options override any `StrictHostKeyChecking` in your ssh config.
 
 **Restrictions** are informational. They are shown by `ctun info` as guidance but are
 never enforced by `ctun` — the only hard enforcement is the budget guard below.
@@ -512,6 +539,7 @@ except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
 | `run`, `preflight` | `ctun run` (streamed, or `capture=True` with an optional `timeout`) and `run -n` |
 | `upload`, `download` | `ctun upload`, `download` (optionally `capture=True`) |
 | `jobs` | `ctun jobs` |
+| `host_key`, `pin_host_key` | `ctun hostkey`, `hostkey --pin`; pins only the fingerprint a person confirmed |
 | `budget` | The guard's verdict for any submission right now, probed over the tunnel |
 | `feed_script` | Runs a local bash script on the login node; not guarded, for read-only probes |
 | `connection`, `clusters`, `load_config` | The resolved ssh target and control socket; the config |
@@ -532,6 +560,7 @@ are the public interface and follow semantic versioning.
 | `~/.config/cluster-tunnel/config.yaml` | Your configuration. |
 | `~/.config/cluster-tunnel/config.yaml.bak` | The config as it was before the last `ctun config --migrate`. |
 | `~/.config/cluster-tunnel/budget/<cluster>.sh` | Per-cluster budget scripts. |
+| `~/.config/cluster-tunnel/known_hosts` | Host keys pinned with `ctun hostkey --pin` (on Windows, inside WSL). |
 | `~/.cache/cluster-tunnel/sockets/<cluster>` | SSH control sockets (the live tunnels). |
 | `~/.cache/cluster-tunnel/sessions/<cluster>.json` | Internal session state (start time, limit). |
 

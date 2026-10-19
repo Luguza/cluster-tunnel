@@ -12,6 +12,7 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 - `info` — cluster briefing
 - `note` — record a fact about a cluster (after the user approves)
 - `login` — authenticate and open the tunnel
+- `hostkey` — check (and, the user's call, pin) the server's host key
 - `run` — run a command through the tunnel
 - `upload` / `download` — transfer files over the tunnel
 - `logs` — commands sent this session
@@ -129,6 +130,26 @@ ctun -t <cluster> login [-i|--interactive] [-l|--limit N] [--timeout S] [-v]
 A **session** lasts for one authentication. Logging in again (after a drop)
 starts a fresh session and resets the budget window. On success `ctun` prints a
 panel with the target and the session's budget.
+
+## `hostkey` — check and pin the server's host key
+
+```
+ctun -t <cluster> hostkey [-j|--json]
+ctun -t <cluster> hostkey --pin [-y|--yes]
+```
+
+- Shows the host key the cluster's server presents and whether it is the pinned
+  one. The key comes over a fresh connection that stops before logging in: no
+  password, no OTP, no tunnel needed.
+- Until a key is pinned, logins accept the key on first contact (`accept-new`).
+- `--pin` stores the key in ctun's known_hosts file and sets
+  `strict_host_key_checking: 'yes'` and `known_hosts_file` in the cluster's
+  config entry, so later logins refuse any other key. It shows the change and
+  asks; without a terminal it only shows it, unless `-y/--yes`.
+- **Pinning is the user's decision.** Show them the fingerprint, let them compare
+  it with the one the cluster's operators publish, and let them run `--pin`.
+- Exits 1 when the server presents a key other than the pinned one. **Stop and
+  tell the user**; a changed key can only be re-pinned from a terminal.
 
 ## `run` — run a command through the tunnel
 
@@ -277,7 +298,7 @@ approval of the exact text.
 
 ## JSON output for scripting
 
-`status`, `info`, and `logs` accept `-j/--json` for stable machine-readable
+`status`, `info`, `logs`, `jobs` and `hostkey` accept `-j/--json` for stable machine-readable
 output. Prefer these when you need to parse state programmatically rather than
 scraping the rendered tables/panels.
 
@@ -290,6 +311,7 @@ scraping the rendered tables/panels.
 | `Submission blocked … fail_mode closed` | The budget script errored and the cluster fails closed. | Report it; the budget probe is broken, not the job. |
 | Interactive login `failed or timed out` | Nobody filled the popup, or auth failed. | Ask the user to retry; add `-v` for ssh diagnostics. |
 | `No display for the login dialog` | No GUI available for the popup. | Ask the user to run plain `ctun -t <cluster> login` in a terminal. |
+| `hostkey`: `DIFFERENT from the pinned key`, or login: `Host key verification failed` | The server presents another key than the pinned one: re-keyed, or someone in between. | Stop. Tell the user; only they re-pin, after checking the published fingerprint. |
 | `WSL is not installed` / `WSL distro '…' lacks …` | Windows only: WSL can't carry the tunnel yet. | Show the user the message; they fix WSL. Don't work around it. |
 | `note`: `… single-string description, which can't take notes` | The config predates note lists. | Tell the user; `ctun config --migrate` converts it, and that's their call. |
 

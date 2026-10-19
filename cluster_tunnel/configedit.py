@@ -1,7 +1,8 @@
-"""Surgical edits of the user's YAML config: `ctun note` and `ctun config --migrate`.
+"""Surgical edits of the user's YAML config: `ctun note`, `ctun config --migrate`
+and `ctun hostkey --pin`.
 
 The config is a hand-edited, commented file, so ctun never re-serialises it.
-Each edit replaces or inserts only the lines of one ``description`` value, at
+Each edit replaces or inserts only the lines of the values it changes, at
 the exact positions PyYAML's composer reports, and leaves every other byte of
 the file alone. Before anything is written, the edited text is parsed again and
 must equal the old data with exactly the intended change applied (and still be a
@@ -40,6 +41,7 @@ class Edit:
     new: str
     newline: str  # the file's line ending, kept on write
     changes: list[str]  # one human-readable line per changed cluster
+    label: str = "migrated"  # what the new text is, in the diff header
 
     def diff(self) -> list[str]:
         """The change as unified-diff lines (no trailing newlines)."""
@@ -48,7 +50,7 @@ class Edit:
                 self.old.splitlines(),
                 self.new.splitlines(),
                 fromfile=f"{self.path.name} (now)",
-                tofile=f"{self.path.name} (migrated)",
+                tofile=f"{self.path.name} ({self.label})",
                 lineterm="",
             )
         )
@@ -115,6 +117,45 @@ def plan_migration(path: Path) -> Edit:
         new, step_changes = step(new)
         changes += step_changes
     return Edit(path=path, old=old, new=new, newline=newline, changes=changes)
+
+
+def plan_host_key_pin(path: Path, cluster: str, known_hosts_file: str) -> Edit:
+    """Compute (without writing) the switch of `cluster` to its pinned host key.
+
+    Sets ``strict_host_key_checking: 'yes'`` and ``known_hosts_file`` in the
+    cluster's entry. A value already there is replaced in place (a comment after
+    it stays); a missing key goes in after the connection keys. When both are
+    set already, the edit has no ``changes``.
+    """
+    old, newline = _read(path)
+    node = _cluster_node(_compose(old), cluster)
+    current = (yaml.safe_load(old) or {})["clusters"][cluster]
+    wanted = {"strict_host_key_checking": "yes", "known_hosts_file": known_hosts_file}
+    # An unquoted `yes` reads as true and already means "yes".
+    updates = {
+        key: value for key, value in wanted.items()
+        if current.get(key) != value and not (value == "yes" and current.get(key) is True)
+    }
+
+    edits: list[tuple[int, int, str]] = []
+    missing: list[tuple[str, str]] = []
+    for key, value in updates.items():
+        entry = _entry(node, key)
+        if entry is None:
+            missing.append((key, value))
+        else:
+            edits.append(_replace_scalar(old, cluster, *entry, value))
+    if missing:
+        edits.append(_insert_keys(old, node, missing))
+    new = _splice(old, edits)
+
+    def change(data: dict) -> dict:
+        data["clusters"][cluster].update(updates)
+        return data
+
+    _verify(old, new, change)
+    changes = [f"{cluster}: {key} -> {value}" for key, value in updates.items()]
+    return Edit(path=path, old=old, new=new, newline=newline, changes=changes, label="pinned")
 
 
 def apply(edit: Edit, backup: bool = False) -> Path | None:
@@ -308,6 +349,43 @@ def _insert_description(text: str, node: yaml.MappingNode, note: str, comment: s
         return _splice(text, [(at, at, block + "\n")])
     at = _line_end(text, _content_end(text, node.value[position - 1][1]))
     return _splice(text, [(at, at, "\n" + block)])
+
+
+#: Keys that say how to reach a cluster; new settings go in after them.
+_CONNECTION_KEYS = (
+    "host", "user", "ssh_alias", "identity_file", "ssh_config", "requires_otp", "requires_password",
+)
+
+
+def _render_entry(key: str, value: str) -> str:
+    """One ``key: value`` line, the value quoted only where YAML needs it."""
+    return yaml.safe_dump({key: value}, allow_unicode=True, width=float("inf")).rstrip("\n")
+
+
+def _replace_scalar(
+    text: str, cluster: str, key: yaml.Node, value: yaml.Node, new: str
+) -> tuple[int, int, str]:
+    """Edit replacing a one-line scalar value; what follows it on the line stays."""
+    if not isinstance(value, yaml.ScalarNode) or value.style in ("|", ">"):
+        raise EditError(f"'{cluster}'s {key.value} is not a one-line value; set it by hand")
+    rendered = _render_entry(key.value, new).split(": ", 1)[1]
+    if value.value == "" and value.style is None:  # `key:` with no value yet
+        at = text.index(":", key.end_mark.index) + 1
+        return at, at, " " + rendered
+    return value.start_mark.index, _content_end(text, value), rendered
+
+
+def _insert_keys(text: str, node: yaml.MappingNode, items: list[tuple[str, str]]) -> tuple[int, int, str]:
+    """Edit adding ``key: value`` lines to a cluster, after its connection keys."""
+    column = node.value[0][0].start_mark.column
+    lines = "\n".join(" " * column + _render_entry(key, value) for key, value in items)
+    keys = [k.value if isinstance(k, yaml.ScalarNode) else None for k, _ in node.value]
+    after = [i for i, k in enumerate(keys) if k in _CONNECTION_KEYS]
+    if not after:
+        at = _line_start(text, node.value[0][0].start_mark.index)
+        return at, at, lines + "\n"
+    at = _line_end(text, _content_end(text, node.value[after[-1]][1]))
+    return at, at, "\n" + lines
 
 
 class _Dumper(yaml.SafeDumper):

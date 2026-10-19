@@ -225,3 +225,45 @@ def test_capture_without_timeout_waits(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert ssh.capture(spec, ["true"]).stdout == "ok\n"
     assert seen["timeout"] is None
+
+
+def test_master_accepts_new_host_keys_by_default(tmp_path: Path) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    argv = ssh.open_master_argv(spec)
+    assert "StrictHostKeyChecking=accept-new" in argv
+    assert not any(a.startswith("UserKnownHostsFile") for a in argv)
+
+
+def test_pinned_master_checks_strictly_against_its_own_file(tmp_path: Path) -> None:
+    body = (
+        "clusters:\n  k:\n    host: hh\n    strict_host_key_checking: 'yes'\n"
+        "    known_hosts_file: '~/my keys/known_hosts'\n"
+    )
+    spec = ssh.conn_spec(_config(tmp_path, body), "k")
+    argv = ssh.open_master_argv(spec)
+    assert "StrictHostKeyChecking=yes" in argv
+    expanded = str(Path("~/my keys/known_hosts").expanduser())
+    assert f'UserKnownHostsFile="{expanded}"' in argv  # quoted: ssh splits at spaces
+    # The options precede the destination, and the first value of an option wins.
+    assert argv.index("StrictHostKeyChecking=yes") < argv.index("hh")
+
+
+def test_windows_pinned_master_leaves_the_tilde_to_ssh(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    body = "clusters:\n  k:\n    host: hh\n    known_hosts_file: ~/.config/cluster-tunnel/known_hosts\n"
+    spec = ssh.conn_spec(_config(tmp_path, body), "k")
+    assert 'UserKnownHostsFile="~/.config/cluster-tunnel/known_hosts"' in ssh.open_master_argv(spec)
+
+
+def test_scan_opts_never_authenticate_or_reuse_a_master(tmp_path: Path) -> None:
+    body = "defaults:\n  ssh_config: /etc/ctun_ssh_config\nclusters:\n  k:\n    host: hh\n    identity_file: ~/.ssh/id\n"
+    opts = ssh.scan_opts(ssh.conn_spec(_config(tmp_path, body), "k"))
+    for option in (
+        "ControlPath=none", "BatchMode=yes", "StrictHostKeyChecking=accept-new",
+        "GlobalKnownHostsFile=/dev/null", "HashKnownHosts=no", "PubkeyAuthentication=no",
+        "PasswordAuthentication=no", "KbdInteractiveAuthentication=no",
+    ):
+        assert option in opts, option
+    assert opts[-2:] == ["-F", str(Path("/etc/ctun_ssh_config"))]  # the cluster's ssh config applies
+    assert "-i" not in opts  # no identity offered
+    assert not any(o.startswith("UserKnownHostsFile") for o in opts)  # the caller adds it

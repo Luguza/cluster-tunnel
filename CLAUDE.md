@@ -31,6 +31,9 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
   carry it (`exit_code`, `marker`).
 - `ssh.py` — OpenSSH ControlMaster wrapper; the persistent tunnel transport
   (open/close/liveness of the control socket, connection specs).
+- `hostkey.py` — host-key pinning: fetch the key a server presents (stopping
+  before authentication), read and write the pinned key. Its POSIX sh helper
+  runs where ssh runs (inside WSL on Windows).
 - `wsl.py` — the Windows bridge (experimental): on Windows every `ssh`/`rsync`
   runs inside WSL 2 via `wsl.exe`; also the login preflight and local-path
   translation. A no-op elsewhere.
@@ -65,6 +68,7 @@ the Rich-formatted help. One file per command domain:
 
 - `tunnel.py` — `login`, `status`, `logout`
 - `jobs.py` — `jobs` (Slurm job overview; grouped under Tunnel)
+- `hostkey.py` — `hostkey` (show / pin the server's host key; grouped under Tunnel)
 - `execution.py` — `run` (budget-guarded command execution)
 - `transfer.py` — `upload`, `download`
 - `context.py` — `info`, `note`, `logs` (the agent briefing)
@@ -111,6 +115,8 @@ A cluster entry (see `config.example.yaml` and `skill/reference.md`):
 - `requires_otp` (default `false`) — advisory; shows/hides the OTP field in the popup
 - `requires_password` (default `true`) — set `false` for OTP-only / key-only
   clusters; hides the password field and requires a non-empty password when true
+- `strict_host_key_checking` (`accept-new` default | `'yes'`) + `known_hosts_file` —
+  host-key checking of the master; `ctun hostkey --pin` sets both
 - `description` — one string, or a list of notes that `ctun note` appends to;
   surfaced by `ctun info`
 - `restrictions` (advisory) — surfaced by `ctun info`

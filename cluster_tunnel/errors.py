@@ -103,6 +103,10 @@ class TransportError(ClusterTunnelError):
     """The transport around ssh failed (on Windows: the WSL bridge)."""
 
 
+class HostKeyError(ClusterTunnelError):
+    """A host key could not be fetched or pinned, or isn't the one confirmed."""
+
+
 def budget_blocked(cluster: str, command: Sequence[str], decision: "Decision") -> BudgetBlocked:
     """The error for a blocked ``decision``: exhausted when it carries a usage
     number at or over the limit, otherwise not verifiable."""

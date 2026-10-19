@@ -401,3 +401,95 @@ def test_unknown_clusters_are_refused_everywhere(cfg: Path, monkeypatch) -> None
     for call in calls:
         with pytest.raises(api.UnknownClusterError):
             call()
+
+
+# --- host keys -------------------------------------------------------------------
+
+
+def _keys(*fingerprints: str, host: str = "h") -> list:
+    return [
+        api.HostKey(host, "ED25519", 256, fp, f"{host} ssh-ed25519 KEY{i}")
+        for i, fp in enumerate(fingerprints)
+    ]
+
+
+def _pinned_config(tmp_path: Path) -> Path:
+    p = tmp_path / "pinned.yaml"
+    p.write_text(
+        "clusters:\n  bw:\n    host: h\n    strict_host_key_checking: 'yes'\n    known_hosts_file: /kh\n",
+        encoding="utf-8",
+    )
+    return p
+
+
+def test_host_key_of_an_unpinned_cluster(cfg: Path, monkeypatch) -> None:
+    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: _keys("SHA256:a"))
+    _forbid(monkeypatch, "cluster_tunnel.hostkey.pinned")  # no known_hosts_file to read
+    status = api.host_key("c")
+    assert [k.fingerprint for k in status.offered] == ["SHA256:a"]
+    assert status.pinned == [] and not status.strict and not status.matches
+
+
+def test_host_key_compares_with_the_pinned_key_of_the_same_host(tmp_path: Path, monkeypatch) -> None:
+    p = _pinned_config(tmp_path)
+    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: _keys("SHA256:a"))
+    reads: list = []
+    monkeypatch.setattr(
+        "cluster_tunnel.hostkey.pinned", lambda spec, file, host: reads.append((file, host)) or _keys("SHA256:a")
+    )
+    status = api.host_key("bw", config_path=p)
+    assert status.strict and status.matches and status.known_hosts_file == "/kh"
+    assert reads == [("/kh", "h")]
+
+    monkeypatch.setattr("cluster_tunnel.hostkey.pinned", lambda spec, file, host: _keys("SHA256:old"))
+    changed = api.host_key("bw", config_path=p).as_dict()
+    assert changed["matches"] is False and changed["pinned"][0]["fingerprint"] == "SHA256:old"
+
+
+def test_host_key_of_an_unreachable_server(cfg: Path, monkeypatch) -> None:
+    def refused(spec):
+        raise RuntimeError("ssh: connect to host h port 22: Connection refused")
+
+    monkeypatch.setattr("cluster_tunnel.hostkey.scan", refused)
+    with pytest.raises(api.HostKeyError, match="cannot fetch the host key of 'c': ssh: connect"):
+        api.host_key("c")
+
+
+def test_pin_host_key_refuses_a_key_other_than_the_confirmed_one(cfg: Path, monkeypatch) -> None:
+    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: _keys("SHA256:now"))
+    _forbid(monkeypatch, "cluster_tunnel.hostkey.pin")
+    before = cfg.read_text(encoding="utf-8")
+    with pytest.raises(api.HostKeyError, match="presents SHA256:now, not SHA256:confirmed"):
+        api.pin_host_key("c", "SHA256:confirmed")
+    assert cfg.read_text(encoding="utf-8") == before
+
+
+def test_pin_host_key_stores_the_key_and_makes_logins_strict(cfg: Path, tmp_path: Path, monkeypatch) -> None:
+    keys = _keys("SHA256:a")
+    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: keys)
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "conf")
+    pins: list = []
+    monkeypatch.setattr("cluster_tunnel.hostkey.pin", lambda spec, file, k: pins.append((file, k)))
+
+    status = api.pin_host_key("c", "SHA256:a")
+    file = str(tmp_path / "conf" / "known_hosts")
+    assert pins == [(file, keys)]
+    entry = api.load_config().clusters["c"]
+    assert entry.strict_host_key_checking == "yes" and entry.known_hosts_file == file
+    assert status.strict and status.matches and status.known_hosts_file == file
+    backup = tmp_path / "config.yaml.bak"
+    assert "strict_host_key_checking" not in backup.read_text(encoding="utf-8")
+
+    # Pinning the same key again rewrites the key file only, not the config.
+    backup.unlink()
+    api.pin_host_key("c", "SHA256:a")
+    assert not backup.exists() and len(pins) == 2
+
+
+def test_pin_host_key_pins_nothing_when_the_config_cant_be_edited(tmp_path: Path, monkeypatch) -> None:
+    p = tmp_path / "flow.yaml"
+    p.write_text("clusters: {bw: {host: h}}\n", encoding="utf-8")
+    monkeypatch.setattr("cluster_tunnel.hostkey.scan", lambda spec: _keys("SHA256:a"))
+    _forbid(monkeypatch, "cluster_tunnel.hostkey.pin")
+    with pytest.raises(api.ConfigError, match="cannot pin the host key"):
+        api.pin_host_key("bw", "SHA256:a", config_path=p)

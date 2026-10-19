@@ -28,6 +28,8 @@ clusters:
   #   user: ab1234
   #   ssh_alias: horeka              # optional: reuse a ~/.ssh/config Host block
   #   requires_otp: true             # advisory: surfaced via `ctun info`
+  #   strict_host_key_checking: 'yes'   # set by `ctun hostkey --pin`: accept only the pinned
+  #   known_hosts_file: ~/.config/cluster-tunnel/known_hosts   # host key (default: accept-new)
   #   control_persist: "24h"
   #   description:                   # notes for the agent, shown by `ctun info` (one string
   #     - HoreKa @ KIT (NHR). GPU jobs -> partition 'accelerated'.   # also works, but only a

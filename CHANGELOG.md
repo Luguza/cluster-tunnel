@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exceptions; those with a stable exit code carry it (`LoginRequired` 10,
   `BudgetExhausted` 11, `BudgetGuardError` 12). The API and `cluster_tunnel.errors`
   are the public interface and follow semantic versioning.
+- **Host-key pinning.** `ctun -t <cluster> hostkey` shows the host key the server
+  presents, fetched over a connection that stops before logging in (no password or
+  OTP), and whether it is the pinned one; it exits 1 on a different key. `--pin` stores
+  the key in ctun's own known_hosts file and sets the new cluster keys
+  `strict_host_key_checking: 'yes'` and `known_hosts_file`, after showing the change
+  and asking (`-y/--yes` without a terminal; never for a changed key). From then on a
+  login refuses any other key. In the API: `host_key` and `pin_host_key`, which pins
+  only the fingerprint a person confirmed.
 
 ### Changed
 
@@ -26,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Python API. Their output, exit codes and `ctun-error:` markers are unchanged;
   new contract tests pin them, and every scenario is checked through both the CLI
   and the API.
+- The tunnel's host-key checking now follows the cluster's
+  `strict_host_key_checking` (default `accept-new`, as before) instead of a fixed
+  `accept-new`.
 
 ## [0.6.0] - 2026-10-14
 

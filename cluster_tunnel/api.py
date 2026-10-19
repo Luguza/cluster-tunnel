@@ -34,8 +34,9 @@ import pydantic
 import yaml
 
 from cluster_tunnel import budget as budget_mod
-from cluster_tunnel import cmdlog
+from cluster_tunnel import cmdlog, configedit
 from cluster_tunnel import config as config_mod
+from cluster_tunnel import hostkey as hostkey_mod
 from cluster_tunnel import jobs as jobs_mod
 from cluster_tunnel import session, ssh, wsl
 from cluster_tunnel import transfer as transfer_mod
@@ -47,12 +48,14 @@ from cluster_tunnel.errors import (
     BudgetGuardError,
     ClusterTunnelError,
     ConfigError,
+    HostKeyError,
     LoginError,
     LoginRequired,
     TransportError,
     UnknownClusterError,
     budget_blocked,
 )
+from cluster_tunnel.hostkey import HostKey
 from cluster_tunnel.jobs import Job
 from cluster_tunnel.ssh import ConnSpec
 
@@ -60,12 +63,14 @@ __all__ = [
     # operations
     "load_config", "clusters", "connection", "is_live", "status", "login", "logout",
     "preflight", "budget", "run", "feed_script", "upload", "download", "jobs",
+    "host_key", "pin_host_key",
     # results
-    "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult",
-    "Decision", "Job", "ConnSpec", "Config", "Cluster",
+    "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
+    "Decision", "Job", "HostKey", "ConnSpec", "Config", "Cluster",
     # errors
     "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
     "LoginError", "BudgetBlocked", "BudgetExhausted", "BudgetGuardError", "TransportError",
+    "HostKeyError",
 ]
 
 PathLike = Union[str, Path]
@@ -151,6 +156,34 @@ class LogoutResult:
 
     cluster: str
     was_live: bool
+
+
+@dataclass
+class HostKeyStatus:
+    """The host key a cluster's server presents now, against the key pinned for it."""
+
+    cluster: str
+    offered: list[HostKey]  # what the server presents now
+    pinned: list[HostKey]  # what known_hosts_file holds for the same host; empty: none
+    strict: bool  # logins accept only a known key (strict_host_key_checking: yes)
+    known_hosts_file: Optional[str]  # None: ssh's own known_hosts
+
+    @property
+    def matches(self) -> bool:
+        """True if every key the server presents is pinned."""
+        pinned = {key.fingerprint for key in self.pinned}
+        return bool(self.offered) and all(key.fingerprint in pinned for key in self.offered)
+
+    def as_dict(self) -> dict:
+        """As ``ctun hostkey --json`` prints it."""
+        return {
+            "cluster": self.cluster,
+            "offered": [key.as_dict() for key in self.offered],
+            "pinned": [key.as_dict() for key in self.pinned],
+            "strict": self.strict,
+            "known_hosts_file": self.known_hosts_file,
+            "matches": self.matches,
+        }
 
 
 # --- config --------------------------------------------------------------------
@@ -370,6 +403,70 @@ def logout(
     return closed
 
 
+# --- host keys ---------------------------------------------------------------------
+
+
+def host_key(
+    cluster: str, *, config: Optional[Config] = None, config_path: Optional[PathLike] = None
+) -> HostKeyStatus:
+    """The host key ``cluster``'s server presents now, and whether it is the pinned one.
+
+    The key comes over a fresh connection that stops before logging in, so it
+    needs neither a tunnel nor a password. ``pinned`` lists the keys the
+    cluster's ``known_hosts_file`` holds for the same host. Raises
+    :class:`HostKeyError` when the server can't be reached.
+    """
+    config, _ = _load(config, config_path)
+    entry = _entry(config, cluster)
+    spec = ssh.conn_spec(config, cluster)
+    offered = _host_keys(cluster, "fetch", lambda: hostkey_mod.scan(spec))
+    pinned: list[HostKey] = []
+    if entry.known_hosts_file:
+        file = entry.known_hosts_file
+        pinned = _host_keys(cluster, "read", lambda: hostkey_mod.pinned(spec, file, offered[0].host))
+    return HostKeyStatus(
+        cluster=cluster,
+        offered=offered,
+        pinned=pinned,
+        strict=entry.strict_host_key_checking == "yes",
+        known_hosts_file=entry.known_hosts_file,
+    )
+
+
+def pin_host_key(
+    cluster: str, fingerprint: str, *, config_path: Optional[PathLike] = None
+) -> HostKeyStatus:
+    """Pin ``cluster``'s host key: the one with ``fingerprint``, as a person confirmed it.
+
+    Fetches the key again and refuses (:class:`HostKeyError`) unless the server
+    presents exactly that fingerprint. The key then replaces any earlier one for
+    the host in the cluster's ``known_hosts_file`` (default: ctun's own), and
+    the config file gets ``strict_host_key_checking: 'yes'`` and that
+    ``known_hosts_file`` (the previous file is kept as ``<config>.bak``), so later
+    logins accept no other key. Raises :class:`ConfigError` when the config
+    can't be edited safely; then nothing is pinned.
+    """
+    path = config_mod.resolve_config_path(_path_arg(config_path))
+    config = load_config(config_path)
+    entry = _entry(config, cluster)
+    spec = ssh.conn_spec(config, cluster)
+    offered = _host_keys(cluster, "fetch", lambda: hostkey_mod.scan(spec))
+    presented = [key.fingerprint for key in offered]
+    if presented != [fingerprint]:
+        raise HostKeyError(
+            f"'{cluster}' presents {', '.join(presented)}, not {fingerprint}; nothing was pinned."
+        )
+    file = entry.known_hosts_file or hostkey_mod.default_file()
+    try:
+        edit = configedit.plan_host_key_pin(path, cluster, file)
+    except configedit.EditError as exc:
+        raise ConfigError(f"cannot pin the host key in {path}: {exc}") from exc
+    _host_keys(cluster, "pin", lambda: hostkey_mod.pin(spec, file, offered))
+    if edit.changes:
+        configedit.apply(edit, backup=True)
+    return HostKeyStatus(cluster, offered, list(offered), True, file)
+
+
 # --- commands ----------------------------------------------------------------------
 
 
@@ -586,6 +683,14 @@ def _tokens(command: Sequence[str]) -> list[str]:
     if isinstance(command, str):
         raise TypeError("command is an argv list, e.g. ['squeue', '--me'], not a string")
     return list(command)
+
+
+def _host_keys(cluster: str, action: str, call: Callable):
+    """Run a host-key operation, turning its failure into :class:`HostKeyError`."""
+    try:
+        return call()
+    except RuntimeError as exc:
+        raise HostKeyError(f"cannot {action} the host key of '{cluster}': {exc}") from exc
 
 
 def _preflight(config: Config, path: Path, name: str, spec: ConnSpec, tokens: list[str]) -> Decision:

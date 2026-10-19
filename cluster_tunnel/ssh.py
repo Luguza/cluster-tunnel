@@ -34,6 +34,8 @@ class ConnSpec:
     identity_file: str | None
     ssh_config: str | None = None  # alternative ssh config file, passed as -F
     wsl_distro: str | None = None  # Windows only; None means WSL's default distro
+    strict_host_key_checking: str = "accept-new"  # "yes" once the host key is pinned
+    known_hosts_file: str | None = None  # the pinned key's file; None means ssh's own
 
 
 def conn_spec(config: Config, name: str) -> ConnSpec:
@@ -55,6 +57,8 @@ def conn_spec(config: Config, name: str) -> ConnSpec:
         identity_file=cluster.identity_file,
         ssh_config=cluster.ssh_config or d.ssh_config,
         wsl_distro=d.wsl_distro,
+        strict_host_key_checking=cluster.strict_host_key_checking,
+        known_hosts_file=cluster.known_hosts_file,
     )
 
 
@@ -76,6 +80,20 @@ def _config_opts(spec: ConnSpec) -> list[str]:
 def _identity_opts(spec: ConnSpec) -> list[str]:
     """``-i`` for an explicit identity (key) file, when one is configured."""
     return ["-i", _ssh_path(spec.identity_file)] if spec.identity_file else []
+
+
+def _host_key_opts(spec: ConnSpec) -> list[str]:
+    """How the master checks the server's host key.
+
+    ``accept-new`` records an unknown key on first contact and refuses a changed
+    one; ``yes`` accepts only a key already in ``known_hosts_file``, which then
+    replaces ssh's own known_hosts (quoted: ssh splits the value at spaces).
+    Command-line options win over the ssh config, so these always apply.
+    """
+    opts = ["-o", f"StrictHostKeyChecking={spec.strict_host_key_checking}"]
+    if spec.known_hosts_file:
+        opts += ["-o", f'UserKnownHostsFile="{_ssh_path(spec.known_hosts_file)}"']
+    return opts
 
 
 def _socket_opts(spec: ConnSpec) -> list[str]:
@@ -115,12 +133,41 @@ def open_master_argv(spec: ConnSpec, verbose: int = 0) -> list[str]:
         "-o", f"ControlPersist={spec.control_persist}",
         "-o", f"ServerAliveInterval={spec.server_alive_interval}",
         "-o", f"ServerAliveCountMax={spec.server_alive_count_max}",
-        "-o", "StrictHostKeyChecking=accept-new",
+        *_host_key_opts(spec),
         *_config_opts(spec),
         *_identity_opts(spec),
     ]
     argv += ["-N", "-f", spec.target]
     return argv
+
+
+def scan_opts(spec: ConnSpec) -> list[str]:
+    """ssh options that fetch the server's host key and stop before logging in.
+
+    A fresh connection (no master, no multiplexing) records the key it is
+    offered in the known_hosts file the caller adds with ``UserKnownHostsFile``
+    (in plain form, and always: the global file is not consulted), then fails at
+    authentication, as every method is off: no password or OTP is ever asked.
+    Should a server let the connection in unauthenticated, ``true`` is all that
+    runs. The cluster's ssh config still applies (``-F``, the alias's ProxyJump).
+    """
+    return [
+        "-o", "ControlMaster=no",
+        "-o", "ControlPath=none",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=20",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "GlobalKnownHostsFile=/dev/null",
+        "-o", "HashKnownHosts=no",
+        "-o", "CheckHostIP=no",
+        "-o", "UpdateHostKeys=no",
+        "-o", "PubkeyAuthentication=no",
+        "-o", "PasswordAuthentication=no",
+        "-o", "KbdInteractiveAuthentication=no",
+        "-o", "HostbasedAuthentication=no",
+        "-o", "GSSAPIAuthentication=no",
+        *_config_opts(spec),
+    ]
 
 
 def check_argv(spec: ConnSpec) -> list[str]:
