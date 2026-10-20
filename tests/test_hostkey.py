@@ -261,7 +261,7 @@ def test_check_runs_ssh_verbosely_with_the_masters_known_hosts(monkeypatch) -> N
     assert hostkey.check(spec).trust == "new"
     argv = seen["argv"]
     assert argv[:2] == ["ssh", "-v"] and argv[-2:] == ["bw.example", "true"]
-    assert "StrictHostKeyChecking=yes" in argv and 'UserKnownHostsFile="/kh"' in argv
+    assert "StrictHostKeyChecking=yes" in argv and f'UserKnownHostsFile="{Path("/kh")}"' in argv
     assert "GlobalKnownHostsFile=/dev/null" in argv and seen["timeout"] == hostkey.TIMEOUT
 
 
