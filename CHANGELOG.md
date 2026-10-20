@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-20
+
+### Added
+
+- **Login with credentials from the caller.** `api.login(cluster,
+  credentials=api.Credentials(password, otp))` opens the tunnel with a password and OTP
+  that a program asked for itself, such as a window's masked field: they go to ssh as
+  the login dialog's do, with no dialog and no terminal. A cluster that requires a
+  password refuses the login without one before ssh starts; the OTP is advisory, as in
+  the dialog. A `limit` in the credentials stands in for the `limit` argument.
+  `credentials` with `interactive=True` is a `ValueError`.
+
+### Changed
+
+- **A failed password login says why in the error.** When a login through the dialog
+  or with `credentials` fails, what ssh said about it (a refused host key; with
+  `verbose`, all its diagnostics) is in `LoginError.diagnostics` instead of being
+  written to the process's stderr, so a program with its own window can show it.
+  `ctun login -i` prints it as before.
+
+### Security
+
+- **Credentials never print.** `api.Credentials`, which is also the login dialog's
+  answer, shows only which secrets are set in its repr, so a log line or a traceback
+  that holds one leaks neither the password nor the OTP.
+  The reason a failed login gives masks both, in case the server echoed one.
+
 ## [0.7.1] - 2026-10-20
 
 ### Changed

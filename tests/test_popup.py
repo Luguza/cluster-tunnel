@@ -137,7 +137,7 @@ def test_login_runs_driver_in_process_off_windows(monkeypatch) -> None:
     monkeypatch.setattr(wsl, "enabled", lambda: False)
     _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
     monkeypatch.setattr(pty_login, "login", lambda *a: calls.append(a) or (True, b""))
-    assert popup.login_with_password(_spec(), "pw", "123", timeout=5)
+    assert popup.open_with_password(_spec(), "pw", "123", timeout=5) == (True, "")
     assert calls == [(["ssh", "-M"], ["ssh", "-O", "check"], "pw", "123", 5, 0)]
 
 
@@ -151,7 +151,7 @@ def test_windows_login_streams_driver_with_secrets_off_argv(monkeypatch) -> None
     monkeypatch.setattr(wsl, "enabled", lambda: True)
     monkeypatch.setattr(wsl, "run", fake_run)
     _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
-    assert popup.login_with_password(_spec(), "s3cret", "123456", timeout=5)
+    assert popup.open_with_password(_spec(), "s3cret", "123456", timeout=5) == (True, "")
 
     assert seen["argv"] == ["python3", "-I", "-"] and seen["distro"] == "Ubuntu"
     program = seen["stdin"].decode("utf-8")
@@ -173,7 +173,7 @@ def test_windows_login_program_works_end_to_end(monkeypatch, fake_master) -> Non
     monkeypatch.setattr(wsl, "enabled", lambda: True)
     monkeypatch.setattr(wsl, "run", local_run)
     _stub_ssh(monkeypatch, master, check)
-    assert popup.login_with_password(_spec(), "s3cret", "123456", timeout=20)
+    assert popup.open_with_password(_spec(), "s3cret", "123456", timeout=20) == (True, "")
     assert marker.exists()
 
 
@@ -193,22 +193,40 @@ _REFUSED_KEY = (
         (b"u@h's password: \r\nPermission denied, please try again.\r\n", []),
     ],
 )
-def test_a_failed_login_names_a_refused_host_key_even_without_v(monkeypatch, capsys, transcript, shown) -> None:
+def test_a_failed_login_names_a_refused_host_key_even_without_v(monkeypatch, transcript, shown) -> None:
     monkeypatch.setattr(wsl, "enabled", lambda: False)
     _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
     monkeypatch.setattr(pty_login, "login", lambda *a: (False, transcript))
-    assert not popup.login_with_password(_spec(), "pw", None, timeout=5)
-    err = capsys.readouterr().err
+    live, trouble = popup.open_with_password(_spec(), "pw", None, timeout=5)
+    assert not live
     for words in shown:
-        assert words in err
-    assert "eavesdropping" not in err and "Permission denied" not in err
+        assert words in trouble
+    assert "eavesdropping" not in trouble and "Permission denied" not in trouble
     if not shown:
-        assert err == ""
+        assert trouble == ""
 
 
-def test_a_failed_verbose_login_still_shows_everything(monkeypatch, capsys) -> None:
+def test_a_failed_verbose_login_still_shows_everything(monkeypatch) -> None:
     monkeypatch.setattr(wsl, "enabled", lambda: False)
     _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
     monkeypatch.setattr(pty_login, "login", lambda *a: (False, b"debug1: Reading configuration\r\nPermission denied\r\n"))
-    assert not popup.login_with_password(_spec(), "pw", None, timeout=5, verbose=1)
-    assert "Permission denied" in capsys.readouterr().err
+    live, trouble = popup.open_with_password(_spec(), "pw", None, timeout=5, verbose=1)
+    assert not live and "Permission denied" in trouble
+
+
+def test_a_failed_login_in_wsl_says_why(monkeypatch) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    monkeypatch.setattr(wsl, "run", lambda argv, distro=None, *, stdin=b"", timeout=None:
+                        subprocess.CompletedProcess(argv, 1, "", _REFUSED_KEY.decode()))
+    _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
+    live, trouble = popup.open_with_password(_spec(), "pw", None, timeout=5)
+    assert not live and "Host key verification failed." in trouble
+
+
+def test_a_failed_login_masks_an_echoed_secret(monkeypatch) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: False)
+    _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
+    monkeypatch.setattr(pty_login, "login", lambda *a: (False, b"password: s3cret\r\ncode: 998877\r\nPermission denied\r\n"))
+    live, trouble = popup.open_with_password(_spec(), "s3cret", "998877", timeout=5, verbose=1)
+    assert not live and "Permission denied" in trouble
+    assert "s3cret" not in trouble and "998877" not in trouble

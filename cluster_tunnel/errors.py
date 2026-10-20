@@ -83,6 +83,8 @@ class LoginError(ClusterTunnelError):
 
     ``ssh_failed`` is true when ssh itself failed, where its own diagnostics
     (``verbose`` > 0) say why; with ``verbose`` they are in ``diagnostics``.
+    After a login with a password, ``diagnostics`` also names a refused host
+    key without ``verbose``: no retry with a password fixes that.
     """
 
     def __init__(

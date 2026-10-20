@@ -151,11 +151,24 @@ sys.stdout.write(json.dumps(state["creds"]))
 """
 
 
-@dataclass
+@dataclass(frozen=True)
 class Credentials:
-    password: str
-    otp: Optional[str]
-    limit: Optional[float]
+    """A password and OTP for a login: the dialog's answer (with its session
+    limit), or a program's own prompt's (``api.Credentials``).
+
+    Neither secret is ever printed: the repr shows only which ones are set,
+    so credentials in a log line or a traceback leak nothing.
+    """
+
+    password: str = ""
+    otp: Optional[str] = None
+    limit: Optional[float] = None
+
+    def __repr__(self) -> str:
+        shown = [f"{name}=***" for name in ("password", "otp") if getattr(self, name)]
+        if self.limit is not None:
+            shown.append(f"limit={self.limit!r}")
+        return f"Credentials({', '.join(shown)})"
 
 
 def _candidate_pythons() -> list[str]:
@@ -245,19 +258,21 @@ def prompt_credentials(
     )
 
 
-def login_with_password(
+def open_with_password(
     spec: ConnSpec,
     password: str,
     otp: Optional[str],
     timeout: int,
     verbose: int = 0,
-) -> bool:
+) -> tuple[bool, str]:
     """Open the SSH master in a pty, answering the password and OTP prompts.
 
     The prompt-answering loop lives in :mod:`cluster_tunnel.pty_login`. It runs
-    in-process here, or inside WSL on Windows, next to the ssh it drives. With
-    ``verbose`` > 0, ssh's own diagnostics are printed to stderr if the login
-    fails.
+    in-process here, or inside WSL on Windows, next to the ssh it drives.
+    Returns whether the tunnel is live and, if it isn't, ssh's lines about a
+    refused host key, or with ``verbose`` > 0 all its diagnostics (empty when
+    ssh said nothing worth showing), with the password and OTP masked in case
+    the server echoed one.
     """
     from cluster_tunnel import pty_login
 
@@ -265,12 +280,14 @@ def login_with_password(
     master = ssh.open_master_argv(spec, verbose)
     check = ssh.check_argv(spec)
     if wsl.enabled():
-        return _login_in_wsl(spec, master, check, password, otp, timeout, verbose)
-
-    live, transcript = pty_login.login(master, check, password, otp, timeout, verbose)
-    if not live and transcript:
-        _report(transcript.decode("utf-8", "replace"), verbose)
-    return live
+        live, trouble = _login_in_wsl(spec, master, check, password, otp, timeout, verbose)
+    else:
+        live, transcript = pty_login.login(master, check, password, otp, timeout, verbose)
+        trouble = "" if live else _trouble(transcript.decode("utf-8", "replace"), verbose)
+    for secret in (password, otp):
+        if secret:
+            trouble = trouble.replace(secret, "***")
+    return live, trouble
 
 
 #: What ssh says when it refuses the server's host key.
@@ -282,7 +299,7 @@ _HOST_KEY_TROUBLE = (
 )
 
 
-def _report(output: str, verbose: int) -> None:
+def _trouble(output: str, verbose: int) -> str:
     """After a failed login: all of ssh's output with ``verbose``, otherwise only
     its lines about a refused host key, which no retry with a password fixes."""
     if not verbose:
@@ -290,8 +307,7 @@ def _report(output: str, verbose: int) -> None:
             line for line in output.splitlines(keepends=True)
             if any(words in line for words in _HOST_KEY_TROUBLE)
         )
-    if output:
-        sys.stderr.write(output if output.endswith("\n") else output + "\n")
+    return output
 
 
 def _login_in_wsl(
@@ -302,7 +318,7 @@ def _login_in_wsl(
     otp: Optional[str],
     timeout: int,
     verbose: int,
-) -> bool:
+) -> tuple[bool, str]:
     """Run :mod:`cluster_tunnel.pty_login` inside WSL via ``python3 -I -``.
 
     cluster_tunnel isn't installed in WSL, so the module's source is streamed on
@@ -331,7 +347,7 @@ def _login_in_wsl(
             timeout=timeout + 60,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    if res.returncode != 0 and res.stderr:
-        _report(res.stderr, verbose)
-    return res.returncode == 0
+        return False, ""
+    if res.returncode == 0:
+        return True, ""
+    return False, _trouble(res.stderr or "", verbose)
