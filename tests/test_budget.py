@@ -185,6 +185,15 @@ SCOPE_CASES = [
     (["bash", "-c", "f() { srun y; }; f"], True, False),
     (["bash", "-c", "echo x > sbatch"], False, False),  # a redirection's target, not a command
     (["bash", "-c", "sbatch x 2>&1 | tee log"], True, False),
+    (["bash", "-c", "2>/dev/null sbatch x"], True, False),  # 2> is a redirection, not a command
+    (["bash", "-c", "2>&1 sbatch x"], True, False),
+    (["bash", "-c", "echo 2>err; ls 1>out"], False, False),
+    (["bash", "-c", "echo $'it\\'s'; sbatch x"], True, False),  # $'...' takes escapes
+    (["bash", "-c", "echo $'a; sbatch x'"], False, False),  # ...and is quoted text
+    (["bash", "-c", "echo $(printf $'\\'') && srun y"], True, False),
+    (["bash", "-c", "echo ${x:-$(sbatch j)}"], True, False),  # a substitution in ${...} runs
+    (["bash", "-c", "echo ${x:-`sbatch j`}"], True, False),
+    (["bash", "-c", "echo ${x:-sbatch}"], False, False),
     # Shells and wrappers are read the way they read their arguments.
     (["bash", "-c", "--", "sbatch x"], True, False),
     (["bash", "-c", "-e", "sbatch x"], True, False),
@@ -192,6 +201,8 @@ SCOPE_CASES = [
     (["ssh", "login2", "cd x && sbatch j"], True, False),
     (["ssh", "-p", "2222", "login2", "squeue"], False, False),
     (["su", "-c", "sbatch x"], True, False),
+    (["su", "-", "alice", "-c", "sbatch x"], True, False),  # `-` is a login shell, not the user
+    (["su", "-", "alice"], False, False),
     (["flock", "/tmp/l", "-c", "sbatch x"], True, False),
     (["flock", "/tmp/l", "sbatch", "j"], True, False),
     (["watch", "squeue; sbatch x"], True, False),

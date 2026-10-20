@@ -239,6 +239,8 @@ def _wrapped(words: list[str], i: int, depth: int):
                 j += 1  # the option's value is the next word
         elif name == "env" and _ENV_ASSIGN.fullmatch(word):
             pass
+        elif options and name == "su" and word == "-":
+            pass  # a login shell (`su - user`), not the user
         elif plain:
             plain -= 1
         else:
@@ -272,11 +274,12 @@ def _lex(code: str) -> tuple[list[list[str]], list[str]]:
 
     Commands end at ``;``, ``&``, ``|``, parentheses, braces and newlines outside
     quotes. A ``#`` that starts a word comments out the rest of its line, a
-    backslash-newline joins two lines, ``${...}`` stays one word, a
-    redirection's target (``> out``, ``2>&1``) is no word of the command, and a
-    here-document's lines are skipped. The code of every ``$(...)`` and backtick
-    substitution, quoted or not, comes back separately. An unclosed quote or
-    bracket runs to the end.
+    backslash-newline joins two lines, ``${...}`` stays one word, ``$'...'``
+    takes backslash escapes, a redirection (``> out``, ``2>&1``) is no word of
+    the command, and a here-document's lines are skipped. The code of every
+    ``$(...)`` and backtick substitution, quoted or not, comes back separately,
+    and so does a ``${...}`` that holds one. An unclosed quote or bracket runs
+    to the end.
     """
     commands: list[list[str]] = [[]]
     substitutions: list[str] = []
@@ -306,6 +309,15 @@ def _lex(code: str) -> tuple[list[list[str]], list[str]]:
                 word.append(c)
             i += 1
             continue
+        if quote == "$'":
+            if c == "'":
+                quote = ""
+            else:
+                if c == "\\" and i + 1 < n:
+                    i += 1  # $'it\'s': an escaped quote doesn't end it
+                word.append(code[i])
+            i += 1
+            continue
         if c == "`" or (c == "$" and code.startswith("(", i + 1)):
             start = i + 1 if c == "`" else i + 2
             end = code.find("`", start) if c == "`" else _closing(code, start, "(", ")")
@@ -333,8 +345,15 @@ def _lex(code: str) -> tuple[list[list[str]], list[str]]:
             continue
         if c in "'\"":
             quote, started = c, True
+        elif c == "$" and code.startswith("'", i + 1):
+            quote, started = "$'", True
+            i += 2
+            continue
         elif c == "$" and code.startswith("{", i + 1):
             end = _closing(code, i + 2, "{", "}")
+            body = code[i + 2:end]
+            if "$(" in body or "`" in body:
+                substitutions.append(body)  # ${x:-$(sbatch j)} runs it
             word.append(code[i:end + 1])
             started = True
             i = end + 1
@@ -346,6 +365,8 @@ def _lex(code: str) -> tuple[list[list[str]], list[str]]:
         elif c in " \t\r":
             finish()
         elif c in "<>" or (c == "&" and code.startswith(">", i + 1)):
+            if not target and word and code[i - 1].isdigit() and "".join(word).isdigit():
+                word, started = [], False  # a file descriptor (2>, 1>&2), not a word
             finish()
             start = i
             while i < n and code[i] in "<>&|-":
@@ -377,12 +398,15 @@ def _closing(code: str, start: int, opening: str, closing: str) -> int:
     while i < len(code):
         c = code[i]
         if quote:
-            if c == quote:
+            if c == quote[-1]:
                 quote = ""
-            elif c == "\\" and quote == '"':
+            elif c == "\\" and quote != "'":
                 i += 1
         elif c in "'\"":
             quote = c
+        elif c == "$" and code.startswith("'", i + 1):
+            quote = "$'"
+            i += 1
         elif c == "\\":
             i += 1
         elif c == opening:
