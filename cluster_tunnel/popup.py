@@ -23,7 +23,7 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import resources
 from typing import Optional
 
@@ -153,8 +153,9 @@ sys.stdout.write(json.dumps(state["creds"]))
 
 @dataclass
 class Credentials:
-    password: str
-    otp: Optional[str]
+    # repr=False: a dialog's answer in a log line or a traceback shows no secret.
+    password: str = field(repr=False)
+    otp: Optional[str] = field(repr=False)
     limit: Optional[float]
 
 
