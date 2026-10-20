@@ -108,10 +108,11 @@ class Check:
 
 def default_file(config_path: Path) -> str:
     """Where pinned keys go unless a cluster names its own file: next to the config
-    (a WSL path on Windows, where ssh runs)."""
+    (a WSL path on Windows, where ssh runs). Absolute, as later logins may start
+    in another directory."""
     if wsl.enabled():
         return wsl.DEFAULT_KNOWN_HOSTS
-    return str(Path(config_path).parent / "known_hosts")
+    return str(Path(config_path).expanduser().absolute().parent / "known_hosts")
 
 
 def check(spec: ConnSpec) -> Check:
@@ -125,8 +126,24 @@ def check(spec: ConnSpec) -> Check:
     return parse_check(ssh.captured(spec, argv, timeout=TIMEOUT).stderr)
 
 
+#: A jump connection that logged in; its lines end here.
+_JUMPED = re.compile(r"^(?:debug1: )?Authenticated to .*$", re.MULTILINE)
+#: A proxy command that runs ``ssh -v``, as ProxyJump does under ``-v``.
+_VERBOSE_PROXY = re.compile(r"Executing proxy command: .*\s-v\b")
+
+
 def parse_check(stderr: str) -> Check:
-    """Read ssh's verdict from its ``-v`` output."""
+    """Read ssh's verdict from its ``-v`` output.
+
+    Behind a jump host, ssh passes ``-v`` on to the jump connection, whose lines
+    (its own key, its own verdict) come first and end once it has logged in;
+    the cluster's lines follow. The check itself never logs in.
+    """
+    jumps = list(_JUMPED.finditer(stderr))
+    if jumps:
+        stderr = stderr[jumps[-1].end():]
+    elif _VERBOSE_PROXY.search(stderr):
+        raise RuntimeError(f"could not get through the jump host: {_last_words(stderr)}")
     key = re.search(r"Server host key: (\S+) (SHA256:\S+)", stderr)
     algorithm = re.search(r"kex: host key algorithm: (\S+)", stderr)
     if not key:

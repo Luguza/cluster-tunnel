@@ -206,6 +206,8 @@ def test_parse_refuses_output_it_cannot_pair(out: str) -> None:
 
 def test_default_file_sits_next_to_the_config(tmp_path: Path, monkeypatch) -> None:
     assert hostkey.default_file(tmp_path / "config.yaml") == str(tmp_path / "known_hosts")
+    monkeypatch.chdir(tmp_path)  # a relative --config still pins to an absolute file
+    assert hostkey.default_file(Path("config.yaml")) == str(Path.cwd() / "known_hosts")
     monkeypatch.setattr(wsl, "enabled", lambda: True)  # ssh runs inside WSL: a path there
     assert hostkey.default_file(tmp_path / "config.yaml") == wsl.DEFAULT_KNOWN_HOSTS
 
@@ -246,6 +248,37 @@ def test_parse_check_of_an_unreachable_server() -> None:
 def test_parse_check_refuses_to_guess() -> None:
     with pytest.raises(RuntimeError, match="could not tell"):
         hostkey.parse_check(_SERVER + "debug1: something else entirely\n")
+
+
+# ssh -v through a ProxyJump (OpenSSH 9.6): the jump connection's lines come first.
+_JUMP = (
+    "debug1: Executing proxy command: exec ssh -v -W '[login2]:22' gate\n"
+    "debug1: Authenticating to gate:22 as 'u'\n"
+    "debug1: kex: host key algorithm: rsa-sha2-512\n"
+    "debug1: Server host key: ssh-rsa SHA256:O2DTboTllKGqhQoPIVnj/lvHs034dr7DeIYH+TV6GrU\n"
+    "debug1: Host 'gate' is known and matches the RSA host key.\n"
+)
+_JUMPED = 'Authenticated to gate ([10.0.0.1]:22) using "publickey".\n'
+
+
+def test_parse_check_through_a_jump_host_reads_the_clusters_lines() -> None:
+    said = "No ED25519 host key is known for login2 and you have requested strict checking.\n"
+    verdict = hostkey.parse_check(_JUMP + _JUMPED + "debug1: Authenticating to login2:22 as 'u'\n" + _SERVER + said)
+    assert (verdict.trust, verdict.algorithm) == ("new", "ssh-ed25519")
+    assert verdict.fingerprint == "SHA256:1usCqqf113Q0zG/Llupry8XHwMCA4h8VIPwCzr+7nFE"
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        _JUMP + _JUMPED + "channel 0: open failed: connect failed: Connection refused\n"
+        "kex_exchange_identification: Connection closed by remote host\n",  # the cluster is down
+        _JUMP + "Host key verification failed.\n",  # the jump host itself is refused
+    ],
+)
+def test_parse_check_never_takes_the_jump_hosts_key(said: str) -> None:
+    with pytest.raises(RuntimeError):
+        hostkey.parse_check(said)
 
 
 def test_check_runs_ssh_verbosely_with_the_masters_known_hosts(monkeypatch) -> None:
