@@ -24,8 +24,16 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
 
 ### `cluster_tunnel/` — the CLI package
 
+- `api.py` — the public Python API: one function per command (`login`, `status`,
+  `run`, `upload`, `jobs`, ...), returning dataclasses and raising `errors`. The
+  CLI commands parse options, call it and render the result.
+- `errors.py` — the API's exceptions; those `ctun` reports with a stable exit code
+  carry it (`exit_code`, `marker`).
 - `ssh.py` — OpenSSH ControlMaster wrapper; the persistent tunnel transport
   (open/close/liveness of the control socket, connection specs).
+- `hostkey.py` — host-key pinning: ask ssh (`-v`, no login) what a login makes of
+  the server's key, fetch the key, read and write the pinned key file. Its POSIX
+  sh helper runs where ssh runs (inside WSL on Windows).
 - `wsl.py` — the Windows bridge (experimental): on Windows every `ssh`/`rsync`
   runs inside WSL 2 via `wsl.exe`; also the login preflight and local-path
   translation. A no-op elsewhere.
@@ -60,6 +68,7 @@ the Rich-formatted help. One file per command domain:
 
 - `tunnel.py` — `login`, `status`, `logout`
 - `jobs.py` — `jobs` (Slurm job overview; grouped under Tunnel)
+- `hostkey.py` — `hostkey` (show / pin the server's host key; grouped under Tunnel)
 - `execution.py` — `run` (budget-guarded command execution)
 - `transfer.py` — `upload`, `download`
 - `context.py` — `info`, `note`, `logs` (the agent briefing)
@@ -91,6 +100,12 @@ are mocked/monkeypatched, and `test_cli.py` drives the CLI via Click's
 `CliRunner`. `test_version` asserts against `get_version()`, so it won't break on
 a version bump.
 
+Behaviour belongs in `api.py`; a command only parses, calls the API and renders.
+`test_cli_contract.py` pins what the commands do (exit codes, markers, messages,
+JSON, session and command-log effects) and `test_api_matches_cli.py` runs each
+scenario through the CLI and the API on the same stubs: both must keep passing
+unchanged when logic moves.
+
 ## Config schema (quick reference)
 
 A cluster entry (see `config.example.yaml` and `skill/reference.md`):
@@ -100,13 +115,16 @@ A cluster entry (see `config.example.yaml` and `skill/reference.md`):
 - `requires_otp` (default `false`) — advisory; shows/hides the OTP field in the popup
 - `requires_password` (default `true`) — set `false` for OTP-only / key-only
   clusters; hides the password field and requires a non-empty password when true
+- `strict_host_key_checking` (`accept-new` default | `'yes'`) + `known_hosts_file` —
+  host-key checking of the master; `ctun hostkey --pin` sets both
 - `description` — one string, or a list of notes that `ctun note` appends to;
   surfaced by `ctun info`
 - `restrictions` (advisory) — surfaced by `ctun info`
-- `budget` — `script` + `session_limit` + `unit` + `guard_commands` + `fail_mode`
+- `budget` — `script` + `session_limit` + `unit` + `guard_commands` + `guard_scope`
+  (`first-command` default | `every-command`) + `fail_mode`
 
 Under `defaults`, `wsl_distro` picks the WSL distro on Windows. There,
-`identity_file`, `socket_dir` and `ssh_config` are paths inside WSL.
+`identity_file`, `socket_dir`, `ssh_config` and `known_hosts_file` are paths inside WSL.
 
 ## Releasing a new version
 

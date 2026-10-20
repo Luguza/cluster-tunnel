@@ -185,3 +185,142 @@ def test_sighup_wrapper_survives_exec() -> None:
         capture_output=True, text=True, encoding="utf-8",
     )
     assert res.stdout.strip() == "True", res.stderr
+
+
+def _timing_out(seen: dict):
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    return fake_run
+
+
+def test_capture_timeout_comes_back_as_exit_124(tmp_path: Path, monkeypatch) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    seen: dict = {}
+    monkeypatch.setattr(subprocess, "run", _timing_out(seen))
+    res = ssh.capture(spec, ["sleep", "100"], timeout=3)
+    assert seen["timeout"] == 3
+    assert res.returncode == 124 and "no answer after 3s" in res.stderr
+
+
+def test_feed_script_timeout_comes_back_as_exit_124(tmp_path: Path, monkeypatch) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    script = tmp_path / "probe.sh"
+    script.write_text("sleep 100\n", encoding="utf-8")
+    seen: dict = {}
+    monkeypatch.setattr(subprocess, "run", _timing_out(seen))
+    res = ssh.feed_script(spec, script, [], timeout=5)
+    assert seen["timeout"] == 5 and res.returncode == 124
+
+
+def test_capture_without_timeout_waits(tmp_path: Path, monkeypatch) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, "ok\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert ssh.capture(spec, ["true"]).stdout == "ok\n"
+    assert seen["timeout"] is None
+
+
+def test_master_accepts_new_host_keys_by_default(tmp_path: Path) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    argv = ssh.open_master_argv(spec)
+    assert "StrictHostKeyChecking=accept-new" in argv
+    assert not any(a.startswith("UserKnownHostsFile") for a in argv)
+
+
+def test_pinned_master_checks_strictly_against_its_own_file(tmp_path: Path) -> None:
+    body = (
+        "clusters:\n  k:\n    host: hh\n    strict_host_key_checking: 'yes'\n"
+        "    known_hosts_file: '~/my keys/known_hosts'\n"
+    )
+    spec = ssh.conn_spec(_config(tmp_path, body), "k")
+    argv = ssh.open_master_argv(spec)
+    assert "StrictHostKeyChecking=yes" in argv
+    expanded = str(Path("~/my keys/known_hosts").expanduser())
+    assert f'UserKnownHostsFile="{expanded}"' in argv  # quoted: ssh splits at spaces
+    # The options precede the destination, and the first value of an option wins.
+    assert argv.index("StrictHostKeyChecking=yes") < argv.index("hh")
+
+
+def test_windows_pinned_master_leaves_the_tilde_to_ssh(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    body = "clusters:\n  k:\n    host: hh\n    known_hosts_file: ~/.config/cluster-tunnel/known_hosts\n"
+    spec = ssh.conn_spec(_config(tmp_path, body), "k")
+    assert 'UserKnownHostsFile="~/.config/cluster-tunnel/known_hosts"' in ssh.open_master_argv(spec)
+
+
+def test_scan_opts_never_authenticate_or_reuse_a_master(tmp_path: Path) -> None:
+    body = "defaults:\n  ssh_config: /etc/ctun_ssh_config\nclusters:\n  k:\n    host: hh\n    identity_file: ~/.ssh/id\n"
+    opts = ssh.scan_opts(ssh.conn_spec(_config(tmp_path, body), "k"))
+    for option in (
+        "ControlPath=none", "BatchMode=yes", "StrictHostKeyChecking=accept-new",
+        "GlobalKnownHostsFile=/dev/null", "HashKnownHosts=no", "PubkeyAuthentication=no",
+        "PasswordAuthentication=no", "KbdInteractiveAuthentication=no",
+    ):
+        assert option in opts, option
+    assert opts[-2:] == ["-F", str(Path("/etc/ctun_ssh_config"))]  # the cluster's ssh config applies
+    assert "-i" not in opts  # no identity offered
+    assert not any(o.startswith("UserKnownHostsFile") for o in opts)  # the caller adds it
+
+
+_PINNED = (
+    "clusters:\n  k:\n    host: hh\n    strict_host_key_checking: 'yes'\n"
+    "    known_hosts_file: /etc/ctun/known_hosts\n"
+)
+
+
+def test_a_pinned_master_trusts_nothing_but_its_file(tmp_path: Path) -> None:
+    argv = ssh.open_master_argv(ssh.conn_spec(_config(tmp_path, _PINNED), "k"))
+    assert "GlobalKnownHostsFile=/dev/null" in argv
+    assert "VerifyHostKeyDNS=no" in argv
+
+
+def test_commands_carry_the_pin_but_unpinned_ones_stay_as_they_were(tmp_path: Path, monkeypatch) -> None:
+    seen: list = []
+
+    def fake_run(argv, *a, **k):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    pinned = ssh.conn_spec(_config(tmp_path, _PINNED), "k")
+    ssh.run(pinned, ["ls"])
+    ssh.capture(pinned, ["ls"])
+    assert all("StrictHostKeyChecking=yes" in argv for argv in seen)
+    rsync_e = " ".join(ssh.control_opts(pinned))
+    assert "StrictHostKeyChecking=yes" in rsync_e and "GlobalKnownHostsFile=/dev/null" in rsync_e
+
+    plain = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    seen.clear()
+    ssh.run(plain, ["ls"])
+    assert not any("HostKey" in a or "KnownHosts" in a for a in seen[0])
+    assert not any("HostKey" in a or "KnownHosts" in a for a in ssh.control_opts(plain))
+
+
+def test_check_opts_judge_with_the_masters_files_and_record_nothing(tmp_path: Path) -> None:
+    pinned = ssh.check_opts(ssh.conn_spec(_config(tmp_path, _PINNED), "k"))
+    assert "StrictHostKeyChecking=yes" in pinned
+    assert any(o.startswith("UserKnownHostsFile=") for o in pinned)
+    plain = ssh.check_opts(ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k"))
+    assert "StrictHostKeyChecking=yes" in plain
+    assert not any("KnownHostsFile" in o for o in plain)  # ssh's own files, as the master uses them
+
+
+@pytest.mark.parametrize("opts", ["check", "scan"])
+def test_connections_that_never_log_in_forward_nothing(tmp_path: Path, opts: str) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    built = ssh.check_opts(spec) if opts == "check" else ssh.scan_opts(spec)
+    for option in ("ForwardAgent=no", "ForwardX11=no", "ClearAllForwardings=yes", "PermitLocalCommand=no"):
+        assert option in built, option
+
+
+def test_scan_asks_for_the_algorithm_a_login_negotiates(tmp_path: Path) -> None:
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    assert "HostKeyAlgorithms=rsa-sha2-512" in ssh.scan_opts(spec, "rsa-sha2-512")
+    assert not any(o.startswith("HostKeyAlgorithms") for o in ssh.scan_opts(spec))

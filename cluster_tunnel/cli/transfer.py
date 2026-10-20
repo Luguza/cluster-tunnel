@@ -5,8 +5,6 @@ from __future__ import annotations
 import rich_click as click
 
 from cluster_tunnel.cli.errors import fail
-from cluster_tunnel.constants import ExitCode
-from cluster_tunnel.wsl import WslError
 
 _CTX = {"ignore_unknown_options": True}
 
@@ -15,29 +13,24 @@ class TransferCommandsMixin:
     """Mixin providing the `upload` and `download` commands."""
 
     def _transfer(self, direction: str, src: str, dest: str, dry_run: bool, extra: tuple) -> None:
-        """Shared logic: resolve the cluster, ensure the tunnel is live, transfer."""
-        from cluster_tunnel import ssh
-        from cluster_tunnel import transfer as transfer_mod
+        """Shared logic: resolve the cluster, then transfer over the live tunnel."""
+        from cluster_tunnel import api
 
         config = self.load_config()
         name, _ = self.resolve_cluster(config)
-        spec = ssh.conn_spec(config, name)
-
-        if not ssh.is_live(spec):
-            fail(
-                f"No live tunnel for '{name}'. Run `ctun -t {name} login` "
-                f"(or `ctun -t {name} login --interactive`) first.",
-                ExitCode.LOGIN_REQUIRED,
-            )
+        transfer = api.upload if direction == "upload" else api.download
 
         # Transfers are not budget-guarded — moving data isn't compute.
         try:
-            rc = transfer_mod.run_transfer(
-                spec, direction, src, dest, dry_run=dry_run, extra=extra
+            result = transfer(
+                name, src, dest, dry_run=dry_run, extra=extra,
+                config=config, config_path=self.config_path,
             )
-        except WslError as exc:
+        except api.LoginRequired as exc:
+            fail(str(exc), exc.exit_code)
+        except api.TransportError as exc:
             raise click.ClickException(str(exc)) from exc
-        raise SystemExit(rc)
+        raise SystemExit(result.exit_code)
 
     @click.command("upload", context_settings=_CTX)
     @click.pass_obj

@@ -106,6 +106,9 @@ patterns, and the budget guard explained.
   limits, and prefer batch jobs over idle interactive allocations.
 - **Never save a note without the user's explicit yes** to its exact text (see
   below).
+- **Host keys are the user's call.** Never run `ctun hostkey --pin` yourself. If
+  `hostkey` reports a key DIFFERENT from the pinned one, or a login fails with
+  `Host key verification failed`, stop and tell the user; don't work around it.
 
 ## Remembering what you learn: `ctun note`
 

@@ -98,3 +98,45 @@ def test_windows_upload_runs_rsync_in_wsl_with_translated_source(monkeypatch) ->
 def test_windows_download_translates_the_destination(monkeypatch) -> None:
     argv = _windows_transfer(monkeypatch, "download", "results", "C:\\proj\\data\\")
     assert argv[-2:] == ["user@host:results", "/mnt/c/proj/data/"]
+
+
+def test_capture_transfer_captures_rsync_output(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(argv=argv, **kwargs)
+        return subprocess.CompletedProcess(argv, 0, "sent 12 bytes\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    res = transfer.capture_transfer(_spec(), "upload", "./a", "data", extra=["-z"])
+    assert res.returncode == 0 and res.stdout == "sent 12 bytes\n"
+    # The same argv as the streamed transfer, with the output captured as UTF-8 text.
+    assert seen["argv"] == transfer.RsyncBackend().argv(
+        _spec(), direction="upload", src="./a", dest="data", dry_run=False, extra=["-z"]
+    )
+    assert seen["capture_output"] is True and seen["encoding"] == "utf-8"
+
+
+def test_capture_transfer_without_rsync_is_exit_127(monkeypatch) -> None:
+    def missing(argv, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    res = transfer.capture_transfer(_spec(), "download", "results", "./out")
+    assert res.returncode == 127 and "rsync" in res.stderr
+
+
+def test_windows_capture_transfer_translates_the_local_path(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    monkeypatch.setattr(wsl, "to_wsl_path", lambda path, distro=None: "/mnt/c/proj/out/")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    spec = ConnSpec("k", "user@host", PurePosixPath("~/s/k"), "12h", 60, 3, None, wsl_distro="Ubuntu")
+    transfer.capture_transfer(spec, "download", "results", "C:\\proj\\out\\")
+    assert seen["argv"][:5] == ["wsl.exe", "-d", "Ubuntu", "-e", "rsync"]
+    assert seen["argv"][-2:] == ["user@host:results", "/mnt/c/proj/out/"]

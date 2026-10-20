@@ -5,6 +5,54 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-20
+
+### Added
+
+- **License.** cluster-tunnel is now released under the MIT License (`LICENSE`), so
+  it can be used as a dependency and redistributed.
+- **Python API.** `cluster_tunnel.api` offers each command as a function (`login`,
+  `logout`, `status`, `run`, `preflight`, `upload`, `download`, `jobs`), plus `budget`
+  (the guard's verdict for any submission, probed now), `feed_script`, `connection`
+  and `is_live`. `run` and the transfers can capture their output instead of
+  streaming it, `run` with a timeout. Failures raise `cluster_tunnel.errors`
+  exceptions; those with a stable exit code carry it (`LoginRequired` 10,
+  `BudgetExhausted` 11, `BudgetGuardError` 12). The API and `cluster_tunnel.errors`
+  are the public interface and follow semantic versioning.
+- **Host-key pinning.** `ctun -t <cluster> hostkey` shows the host key the server
+  presents and what a login would make of it, as ssh itself judges it against the
+  known_hosts files a login uses: trusted, new, or different from the trusted key (exit
+  1). It connects without logging in, so the cluster asks no password or OTP. `--pin`
+  stores the key in a `known_hosts` file next to the config and sets the new cluster
+  keys `strict_host_key_checking: 'yes'` and `known_hosts_file`, after showing the
+  change and asking (`-y/--yes` without a terminal; never for a changed key). That file
+  is then the only list of trusted keys for the cluster (not ssh's own files, the
+  global file or DNS), on every ssh `ctun` starts for it. ctun 0.6.0 and older can't
+  read a config with these keys. In the API: `host_key`, and `pin_host_key`, which
+  pins only the given fingerprint and replaces a trusted key only with `replace=True`.
+- **Budget guard scope.** A cluster's `budget` can set `guard_scope: every-command` so
+  the guard finds `guard_commands` wherever a command can start, not only in the first
+  word: in scripts given to `bash -c`, `sh -c`, `eval`, `su -c`, `env -S`, `watch` or
+  `ssh <host>` (split as a shell splits them: comments, here-documents and redirection
+  targets aside, `$(…)` and backticks included), in the command a wrapper such as
+  `env`, `nohup`, `timeout`, `xargs` or `sudo` runs, and after `find -exec`. A command
+  nested too deeply to follow counts as a submission. The default, `first-command`,
+  keeps the previous behaviour. `ctun info` shows the scope.
+
+### Changed
+
+- `login`, `logout`, `status`, `jobs`, `run`, `upload` and `download` now run through
+  the Python API. Their output, exit codes and `ctun-error:` markers are unchanged;
+  new contract tests pin them, and every scenario is checked through both the CLI
+  and the API.
+- The tunnel's host-key checking now follows the cluster's
+  `strict_host_key_checking` (default `accept-new`, as before) instead of a fixed
+  `accept-new`.
+- When `login --interactive` fails because ssh refused the server's host key, ssh's
+  lines saying so are shown even without `-v`.
+- Probes over the tunnel (budget usage, job list) give up after 120 seconds instead of
+  waiting forever; a budget probe that times out is handled per `fail_mode`.
+
 ## [0.6.0] - 2026-10-14
 
 ### Added

@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 from pathlib import Path, PureWindowsPath
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -44,6 +44,9 @@ class Budget(BaseModel):
     guard_commands: list[str] = Field(
         default_factory=lambda: list(constants.DEFAULT_GUARD_COMMANDS)
     )
+    # Where the guard looks for those commands: the first word only, or every
+    # word where a command may start (`bash -c '... && sbatch x'`, `timeout 60 srun`).
+    guard_scope: Literal["first-command", "every-command"] = "first-command"
     fail_mode: str = constants.DEFAULT_FAIL_MODE
 
     @model_validator(mode="after")
@@ -76,6 +79,11 @@ class Cluster(BaseModel):
     ssh_config: Optional[str] = None  # overrides defaults.ssh_config for this cluster
     requires_otp: bool = False
     requires_password: bool = True
+    # Host-key checking for the tunnel's master connection: "accept-new" takes a
+    # key on first contact; "yes" (set by `ctun hostkey --pin`) accepts only the
+    # key pinned in known_hosts_file (ssh's own file when that is unset).
+    strict_host_key_checking: Literal["accept-new", "yes"] = "accept-new"
+    known_hosts_file: Optional[str] = None
     control_persist: Optional[str] = None
     server_alive_interval: Optional[int] = None
     server_alive_count_max: Optional[int] = None
@@ -97,6 +105,30 @@ class Cluster(BaseModel):
                     raise ValueError(
                         f"description item {number} is {kind}, not text; write it in quotes"
                     )
+        return value
+
+    @field_validator("strict_host_key_checking", mode="before")
+    @classmethod
+    def _check_host_key_checking(cls, value: Any) -> Any:
+        # YAML reads an unquoted `yes` as true; only "yes" itself means anything here.
+        if value is True:
+            return "yes"
+        if value is False:
+            raise ValueError("strict_host_key_checking must be 'accept-new' or 'yes'")
+        return value
+
+    @field_validator("known_hosts_file")
+    @classmethod
+    def _check_known_hosts_file(cls, value: Optional[str]) -> Optional[str]:
+        # ctun reads and writes this file itself, so it must name the file ssh
+        # reads: no %-tokens, ${VARIABLES} or ~user, which only ssh expands.
+        if value is not None and (
+            "%" in value or "${" in value or (value.startswith("~") and not value.startswith("~/"))
+        ):
+            raise ValueError(
+                "known_hosts_file must be a plain path (a leading ~/ is fine), "
+                "without %-tokens, ${VARIABLES} or ~user"
+            )
         return value
 
     @model_validator(mode="after")
@@ -186,8 +218,9 @@ def validation_warnings(config: "Config", config_path: Path) -> list[str]:
     - a ``guard_commands`` entry isn't a valid regex (the matcher falls back to
       a literal comparison, so the intended pattern never fires);
     - on Windows, a path that ssh reads inside WSL (``socket_dir``,
-      ``identity_file``, ``ssh_config``) is written as a Windows path, or an
-      ``ssh_config`` starts with ``~``, which ssh does not expand for ``-F``.
+      ``identity_file``, ``ssh_config``, ``known_hosts_file``) is written as a
+      Windows path, or an ``ssh_config`` starts with ``~``, which ssh does not
+      expand for ``-F``.
 
     Returns a list of human-readable warning strings; empty means all clear.
     """
@@ -226,6 +259,7 @@ def _wsl_path_warnings(config: "Config") -> list[str]:
         entries += [
             (f"cluster '{name}': identity_file", cluster.identity_file),
             (f"cluster '{name}': ssh_config", cluster.ssh_config),
+            (f"cluster '{name}': known_hosts_file", cluster.known_hosts_file),
         ]
     warnings: list[str] = []
     for label, value in entries:

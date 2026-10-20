@@ -441,3 +441,72 @@ def test_split_paragraphs() -> None:
     assert split("A\nB\n") == ["A\nB\n"]
     assert split("A\n\n\nB\n  b2\n") == ["A", "B\n  b2\n"]
     assert split("   \n") == []
+
+
+# --- ctun hostkey --pin ---------------------------------------------------------
+
+
+def _pinned(tmp_path: Path, text: str, file: str = "/kh") -> configedit.Edit:
+    return configedit.plan_host_key_pin(_write(tmp_path, text), "bw", file)
+
+
+def test_pin_adds_both_keys_after_the_connection_keys(tmp_path: Path) -> None:
+    edit = _pinned(
+        tmp_path,
+        "clusters:\n  bw:\n    host: uc3.example  # login node\n    user: ab\n"
+        "    requires_otp: true\n    description:\n      - note\n",
+    )
+    assert edit.new == (
+        "clusters:\n  bw:\n    host: uc3.example  # login node\n    user: ab\n"
+        "    requires_otp: true\n    strict_host_key_checking: 'yes'\n    known_hosts_file: /kh\n"
+        "    description:\n      - note\n"
+    )
+    assert edit.changes == ["bw: strict_host_key_checking -> yes", "bw: known_hosts_file -> /kh"]
+    assert "(pinned)" in edit.diff()[1]
+
+
+def test_pin_replaces_values_in_place_and_keeps_their_comments(tmp_path: Path) -> None:
+    edit = _pinned(
+        tmp_path,
+        "clusters:\n  bw:\n    host: h\n    strict_host_key_checking: accept-new   # default\n"
+        "    known_hosts_file:\n",
+    )
+    assert edit.new == (
+        "clusters:\n  bw:\n    host: h\n    strict_host_key_checking: 'yes'   # default\n"
+        "    known_hosts_file: /kh\n"
+    )
+
+
+def test_pin_on_a_pinned_cluster_changes_nothing(tmp_path: Path) -> None:
+    text = "clusters:\n  bw:\n    host: h\n    strict_host_key_checking: yes\n    known_hosts_file: /kh\n"
+    edit = _pinned(tmp_path, text)
+    assert edit.changes == [] and edit.new == text
+
+
+def test_pin_puts_keys_first_when_there_are_no_connection_keys_before(tmp_path: Path) -> None:
+    edit = _pinned(tmp_path, "clusters:\n  bw:\n    description: x\n    ssh_alias: bw\n")
+    assert yaml.safe_load(edit.new)["clusters"]["bw"]["known_hosts_file"] == "/kh"
+    assert edit.new.index("ssh_alias") < edit.new.index("strict_host_key_checking")
+
+
+def test_pin_quotes_a_path_only_where_yaml_needs_it(tmp_path: Path) -> None:
+    edit = _pinned(tmp_path, "clusters:\n  bw:\n    host: h\n", file="~/.config/cluster-tunnel/known_hosts")
+    assert "    known_hosts_file: ~/.config/cluster-tunnel/known_hosts\n" in edit.new
+    assert load_config(str(_write(tmp_path, edit.new))).clusters["bw"].known_hosts_file.startswith("~/")
+
+
+def test_pin_refuses_a_block_value(tmp_path: Path) -> None:
+    with pytest.raises(configedit.EditError, match="not a one-line value"):
+        _pinned(tmp_path, "clusters:\n  bw:\n    host: h\n    known_hosts_file: |\n      /kh\n")
+
+
+def test_pin_keeps_crlf_and_writes_a_backup(tmp_path: Path) -> None:
+    p = tmp_path / "config.yaml"
+    p.write_bytes(b"clusters:\r\n  bw:\r\n    host: h\r\n")
+    edit = configedit.plan_host_key_pin(p, "bw", "/kh")
+    backup = configedit.apply(edit, backup=True)
+    assert backup.read_bytes() == b"clusters:\r\n  bw:\r\n    host: h\r\n"
+    assert p.read_bytes() == (
+        b"clusters:\r\n  bw:\r\n    host: h\r\n    strict_host_key_checking: 'yes'\r\n"
+        b"    known_hosts_file: /kh\r\n"
+    )

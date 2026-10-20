@@ -184,3 +184,43 @@ def test_wsl_path_rules_only_apply_on_windows(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(wsl, "enabled", lambda: False)
     p = _write(tmp_path, _WINDOWS_STYLE)
     assert cfg.validation_warnings(cfg.load_config(str(p)), p) == []
+
+
+def test_host_key_checking_defaults_to_accept_new(tmp_path: Path) -> None:
+    c = cfg.load_config(str(_write(tmp_path, "clusters:\n  c:\n    host: h\n")))
+    assert c.clusters["c"].strict_host_key_checking == "accept-new"
+    assert c.clusters["c"].known_hosts_file is None
+
+
+@pytest.mark.parametrize("value", ["yes", "'yes'", "accept-new"])
+def test_host_key_checking_values(tmp_path: Path, value: str) -> None:
+    # An unquoted `yes` is a YAML boolean; it still means "yes".
+    p = _write(tmp_path, f"clusters:\n  c:\n    host: h\n    strict_host_key_checking: {value}\n")
+    assert cfg.load_config(str(p)).clusters["c"].strict_host_key_checking == value.strip("'")
+
+
+@pytest.mark.parametrize("value", ["no", "false", "ask", "off"])
+def test_host_key_checking_refuses_weaker_values(tmp_path: Path, value: str) -> None:
+    p = _write(tmp_path, f"clusters:\n  c:\n    host: h\n    strict_host_key_checking: {value}\n")
+    with pytest.raises(ValueError, match="strict_host_key_checking"):
+        cfg.load_config(str(p))
+
+
+def test_windows_validation_flags_a_windows_known_hosts_file(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    p = _write(tmp_path, "clusters:\n  c:\n    host: h\n    known_hosts_file: 'C:\\Users\\me\\kh'\n")
+    warnings = cfg.validation_warnings(cfg.load_config(str(p)), p)
+    assert any("known_hosts_file is a Windows path" in w for w in warnings)
+
+
+@pytest.mark.parametrize("path", ["~/.config/k", "/abs/k", "rel/k"])
+def test_known_hosts_file_takes_plain_paths(tmp_path: Path, path: str) -> None:
+    p = _write(tmp_path, f"clusters:\n  c:\n    host: h\n    known_hosts_file: {path}\n")
+    assert cfg.load_config(str(p)).clusters["c"].known_hosts_file == path
+
+
+@pytest.mark.parametrize("path", ["~/%d/k", "${HOME}/k", "~bob/k"])
+def test_known_hosts_file_refuses_what_only_ssh_would_expand(tmp_path: Path, path: str) -> None:
+    p = _write(tmp_path, f"clusters:\n  c:\n    host: h\n    known_hosts_file: '{path}'\n")
+    with pytest.raises(ValueError, match="plain path"):
+        cfg.load_config(str(p))

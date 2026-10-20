@@ -4,8 +4,8 @@ No OpenSSH build for Windows can serve sessions over a ControlMaster socket, so
 on Windows ctun runs ``ssh`` and ``rsync`` inside WSL 2 via ``wsl.exe``. ctun
 itself stays a Windows program; only the transport crosses over. The control
 socket, the ssh config and the keys therefore live in WSL, and the config paths
-that point at them (``socket_dir``, ``identity_file``, ``ssh_config``) are paths
-inside WSL.
+that point at them (``socket_dir``, ``identity_file``, ``ssh_config``,
+``known_hosts_file``) are paths inside WSL.
 """
 
 from __future__ import annotations
@@ -19,6 +19,9 @@ from typing import Optional, Sequence
 
 #: Where control sockets live inside WSL; ssh expands the ``~`` itself.
 DEFAULT_SOCKET_DIR = "~/.cache/cluster-tunnel/sockets"
+
+#: Where pinned host keys live inside WSL (``ctun hostkey --pin``).
+DEFAULT_KNOWN_HOSTS = "~/.config/cluster-tunnel/known_hosts"
 
 #: Seconds to wait for a quick command through wsl.exe; covers a cold WSL start.
 QUICK_TIMEOUT = 60

@@ -175,3 +175,40 @@ def test_windows_login_program_works_end_to_end(monkeypatch, fake_master) -> Non
     _stub_ssh(monkeypatch, master, check)
     assert popup.login_with_password(_spec(), "s3cret", "123456", timeout=20)
     assert marker.exists()
+
+
+_REFUSED_KEY = (
+    b"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n"
+    b"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n"
+    b"Someone could be eavesdropping on you right now (man-in-the-middle attack)!\r\n"
+    b"Offending ED25519 key in /home/u/.config/cluster-tunnel/known_hosts:1\r\n"
+    b"Host key verification failed.\r\n"
+)
+
+
+@pytest.mark.parametrize(
+    "transcript, shown",
+    [
+        (_REFUSED_KEY, ["REMOTE HOST IDENTIFICATION HAS CHANGED", "Offending ED25519 key", "Host key verification failed."]),
+        (b"u@h's password: \r\nPermission denied, please try again.\r\n", []),
+    ],
+)
+def test_a_failed_login_names_a_refused_host_key_even_without_v(monkeypatch, capsys, transcript, shown) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: False)
+    _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
+    monkeypatch.setattr(pty_login, "login", lambda *a: (False, transcript))
+    assert not popup.login_with_password(_spec(), "pw", None, timeout=5)
+    err = capsys.readouterr().err
+    for words in shown:
+        assert words in err
+    assert "eavesdropping" not in err and "Permission denied" not in err
+    if not shown:
+        assert err == ""
+
+
+def test_a_failed_verbose_login_still_shows_everything(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: False)
+    _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
+    monkeypatch.setattr(pty_login, "login", lambda *a: (False, b"debug1: Reading configuration\r\nPermission denied\r\n"))
+    assert not popup.login_with_password(_spec(), "pw", None, timeout=5, verbose=1)
+    assert "Permission denied" in capsys.readouterr().err

@@ -45,87 +45,30 @@ class TunnelCommandsMixin:
         On Windows the tunnel runs inside WSL 2 (experimental): `login` first
         checks that WSL has ssh, rsync and python3, and names the distro it uses.
         """
-        from cluster_tunnel import cmdlog, session, ssh, wsl
+        from cluster_tunnel import api
 
         config = self.load_config()
-        name, cluster = self.resolve_cluster(config)
-        spec = ssh.conn_spec(config, name)
-
-        via = None  # the WSL distro carrying the tunnel, on Windows
-        if wsl.enabled():
-            ready = wsl.preflight(spec.wsl_distro)
-            if not ready.ok:
-                raise click.ClickException("\n".join(ready.problems))
-            via = ready.distro
-
-        # Default limit: --limit, else the cluster's configured session_limit.
-        default_limit = limit
-        if default_limit is None and cluster.budget is not None:
-            default_limit = cluster.budget.session_limit
-        unit = cluster.budget.unit if cluster.budget else "units"
-
-        established = False
-        chosen_limit = default_limit
-        headline = ""  # the styled top line of the success panel
-
-        if ssh.is_live(spec):
-            headline = f"[yellow]●[/yellow] Tunnel to [cyan]{name}[/cyan] is [yellow]already live[/yellow]."
-        elif interactive:
-            from cluster_tunnel import popup
-
-            if not popup.gui_available():
-                raise click.ClickException(
-                    f"No display for the login dialog; run `ctun -t {name} login` from a terminal."
-                )
-            creds = popup.prompt_credentials(
-                name, spec.target, default_limit, unit,
-                cluster.requires_otp, cluster.requires_password,
+        name, _ = self.resolve_cluster(config)
+        try:
+            result = api.login(
+                name, interactive=interactive, limit=limit, timeout=timeout, verbose=verbose,
+                config=config, config_path=self.config_path,
             )
-            if creds is None:
-                raise click.ClickException("Login cancelled.")
-            try:
-                ok = popup.login_with_password(spec, creds.password, creds.otp, timeout, verbose)
-            except wsl.WslError as exc:
-                raise click.ClickException(str(exc)) from exc
-            if not ok:
-                hint = "" if verbose else " Re-run with -v (or -vv/-vvv) for ssh diagnostics."
-                raise click.ClickException(
-                    f"Interactive login to '{name}' failed or timed out.{hint}"
-                )
-            established = True
-            chosen_limit = creds.limit
+        except api.LoginError as exc:
+            if exc.diagnostics:
+                click.echo(exc.diagnostics, err=True)
+            hint = " Re-run with -v (or -vv/-vvv) for ssh diagnostics." if exc.ssh_failed and not verbose else ""
+            raise click.ClickException(f"{exc}{hint}") from exc
+
+        # The styled top line of the success panel.
+        if result.already_live:
+            headline = f"[yellow]●[/yellow] Tunnel to [cyan]{name}[/cyan] is [yellow]already live[/yellow]."
+        elif result.interactive:
             headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green] [dim](interactive)[/dim]."
         else:
-            try:
-                rc = ssh.open_master(spec, verbose)
-            except wsl.WslError as exc:
-                raise click.ClickException(str(exc)) from exc
-            if rc != 0 or not ssh.is_live(spec):
-                if verbose:
-                    detail = (ssh.check(spec).stderr or "").strip()
-                    if detail:
-                        click.echo(detail, err=True)
-                hint = "" if verbose else " Re-run with -v (or -vv/-vvv) for ssh diagnostics."
-                raise click.ClickException(
-                    f"Failed to open tunnel to '{name}' (ssh exit {rc}).{hint}"
-                )
-            established = True
             headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green]."
 
-        # A session limit of -1 (or any negative) means "infinite" — i.e. no
-        # budget guard at all, same as leaving the limit unset.
-        if chosen_limit is not None and chosen_limit < 0:
-            chosen_limit = None
-
-        # A session begins on a fresh authentication; re-auth resets the window.
-        note = None
-        if established or session.load(name) is None:
-            cmdlog.clear(name)  # fresh session: start the command log empty
-            sess = session.start(name, limit=chosen_limit, unit=unit)
-        else:
-            sess = session.load(name)
-            note = "existing session kept; re-auth would reset the budget window"
-
+        sess = result.session
         if sess.get("limit") is not None:
             budget_line = f"  budget   [orange3]{sess['limit']} {sess['unit']}[/orange3]"
         else:
@@ -134,12 +77,12 @@ class TunnelCommandsMixin:
         from rich.console import Group
         from rich.panel import Panel
 
-        body = [headline, "", f"  target   [dim]{spec.target}[/dim]"]
-        if via:
-            body.append(f"  via      [dim]WSL distro {via}[/dim]")
+        body = [headline, "", f"  target   [dim]{result.target}[/dim]"]
+        if result.via:
+            body.append(f"  via      [dim]WSL distro {result.via}[/dim]")
         body.append(budget_line)
-        if note:
-            body.append(f"  [dim]note: {note}[/dim]")
+        if result.session_kept:
+            body.append("  [dim]note: existing session kept; re-auth would reset the budget window[/dim]")
         self.cons.print(
             Panel(
                 Group(*body),
@@ -160,66 +103,21 @@ class TunnelCommandsMixin:
 
         from rich.table import Table
 
-        from cluster_tunnel import budget as budget_mod
-        from cluster_tunnel import cmdlog
-        from cluster_tunnel import config as config_mod
-        from cluster_tunnel import session, ssh
+        from cluster_tunnel import api
 
         config = self.load_config()
         if self.target:
             self.resolve_cluster(config)
-            names = [self.target]
-        else:
-            names = sorted(config.clusters)
 
-        rows = []
-        for name in names:
-            spec = ssh.conn_spec(config, name)
-            live = ssh.is_live(spec)
-            sess = session.load(name)
-            cluster = config.clusters[name]
-
-            # Surface budget unit/limit at the top level (not only nested in the
-            # session) so JSON consumers can always read them. The unit falls
-            # back to the cluster's configured unit; the active limit comes from
-            # the live session (None when unguarded or not logged in).
-            unit = (sess.get("unit") if sess else None) or (
-                cluster.budget.unit if cluster.budget else None
+        # Live budget usage requires a remote probe over the tunnel, so it only
+        # runs for an explicitly targeted cluster — never as a side effect of
+        # the all-clusters overview.
+        rows = [
+            row.as_dict()
+            for row in api.status(
+                self.target or None, usage=bool(self.target), config=config, config_path=self.config_path
             )
-            limit = sess.get("limit") if sess else None
-
-            # Live budget usage requires a remote probe over the tunnel, so we
-            # only run it for an explicitly targeted, guarded, live cluster —
-            # never as a side effect of the all-clusters overview.
-            used: float | None = None
-            used_error: str | None = None
-            if self.target and live and sess and sess.get("limit") is not None:
-                if cluster.budget:
-                    try:
-                        config_path = config_mod.resolve_config_path(self.config_path)
-                        script = config_mod.budget_script_path(
-                            config_path, name, cluster.budget.script
-                        )
-                        user = budget_mod.remote_user(spec, cluster)
-                        used = budget_mod.used_since(
-                            spec, script, int(sess["start_epoch"]), user
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        used_error = str(exc)
-
-            rows.append(
-                {
-                    "cluster": name,
-                    "target": spec.target,
-                    "live": live,
-                    "session": sess,
-                    "limit": limit,
-                    "unit": unit,
-                    "commands": cmdlog.summary(name),
-                    "used": used,
-                    "used_error": used_error,
-                }
-            )
+        ]
 
         if as_json:
             import json
@@ -284,26 +182,19 @@ class TunnelCommandsMixin:
         With a target (`-t <cluster>`), logs out that cluster. Without one, logs
         out every configured cluster.
         """
-        from cluster_tunnel import cmdlog, session, ssh
+        from cluster_tunnel import api
 
         config = self.load_config()
         if self.target:
             self.resolve_cluster(config)  # validate the target
-            names = [self.target]
-        else:
-            names = sorted(config.clusters)
 
-        if not names:
+        closed = api.logout(self.target or None, config=config, config_path=self.config_path)
+        if not closed:
             click.echo("No clusters configured. Run `ctun config --init`.")
             return
 
-        for name in names:
-            spec = ssh.conn_spec(config, name)
-            was_live = ssh.is_live(spec)
-            ssh.close(spec)
-            session.clear(name)
-            cmdlog.clear(name)
-            if was_live:
-                click.echo(f"Tunnel to '{name}' closed; session cleared.")
+        for item in closed:
+            if item.was_live:
+                click.echo(f"Tunnel to '{item.cluster}' closed; session cleared.")
             else:
-                click.echo(f"No live tunnel for '{name}'; session cleared.")
+                click.echo(f"No live tunnel for '{item.cluster}'; session cleared.")

@@ -35,8 +35,10 @@ $ ctun -t horeka logout                 # close the tunnel
 - [Configuration](#-configuration)
 - [The compute-budget guard](#️-the-compute-budget-guard)
 - [Using ctun with coding agents](#-using-ctun-with-coding-agents)
+- [Python API](#-python-api)
 - [Files and locations](#-files-and-locations)
 - [Contributing](#-contributing)
+- [License](#-license)
 
 ---
 
@@ -259,6 +261,35 @@ $ ctun -t horeka login [-i|--interactive] [-l|--limit N] [--timeout S]
 A **session** lasts for the lifetime of one authentication. Logging in again (after the
 tunnel drops) starts a fresh session and resets the budget window.
 
+### `hostkey` — check and pin the server's host key
+
+```console
+$ ctun -t horeka hostkey              # the key the server presents, and what a login makes of it
+$ ctun -t horeka hostkey -j|--json    # machine-readable
+$ ctun -t horeka hostkey --pin        # pin it: shows the change, asks first (-y/--yes: don't ask)
+```
+
+Until a key is pinned, logins accept an unknown server key on first contact (ssh's
+`StrictHostKeyChecking=accept-new`), which trusts whoever answers the first time.
+`hostkey` meets the server over fresh connections that stop before logging in, so the
+cluster asks no password or OTP (a ProxyJump host in your ssh config logs in as usual).
+ssh itself then says what a login would make of the key: one it trusts, a new one, or
+one that differs from the key it trusts, judged against the same known_hosts files a
+login uses.
+
+Compare the fingerprint it shows with the one your cluster's operators publish; then
+`--pin` stores the key in a `known_hosts` file next to the config and sets
+`strict_host_key_checking: 'yes'` and `known_hosts_file` in the cluster's config entry
+(keeping the previous config as `config.yaml.bak`). From then on that file is the only
+list of trusted keys for the cluster: ssh's own known_hosts files and DNS records no
+longer count, and every ssh `ctun` starts for the cluster checks it. Versions before
+0.7.0 can't read a config with these keys.
+
+`hostkey` exits 1 when the server presents a different key than the one logins trust
+(pinned, or known to ssh from earlier): a re-keyed server, or someone in between. Find out
+which before logging in; such a key can only be pinned from a terminal (`--yes` does not
+apply to it).
+
 ### `run` — run a command through the tunnel
 
 ```console
@@ -394,6 +425,8 @@ clusters:
     user: ab1234                  # your username on the cluster
     ssh_alias: horeka             # optional: reuse a Host block from ~/.ssh/config instead of host/user
     identity_file: ~/.ssh/horeka  # optional: SSH key to use
+    strict_host_key_checking: 'yes'   # set by `ctun hostkey --pin`; default: accept-new
+    known_hosts_file: ~/.config/cluster-tunnel/known_hosts   # where the pinned key is kept
     control_persist: "24h"        # optional per-cluster override
 
     description:                  # notes for the agent, shown by `ctun info` (or one string)
@@ -410,11 +443,18 @@ clusters:
       session_limit: 500          # default budget; overridden by `login --limit`
       unit: jobh                  # label for display (bundled scripts report job-hours)
       guard_commands: [sbatch, srun, salloc]   # commands subject to the budget check
+      guard_scope: every-command  # also inside `bash -c`, after env/timeout/xargs (default: first-command)
       fail_mode: closed           # if the budget script errors: "closed" blocks, "open" allows
 ```
 
 **Connecting:** if `ssh_alias` is set, `ctun` uses that `~/.ssh/config` Host entry for the
 hostname, user, and key; otherwise it uses `host` + `user` (+ optional `identity_file`).
+
+**Host keys:** `strict_host_key_checking` is `accept-new` unless you pin the cluster's key
+with `ctun hostkey --pin`, which sets it to `'yes'` together with `known_hosts_file`. With
+`'yes'`, a login accepts only a key it already knows. A `known_hosts_file` makes that file
+the only one consulted (not ssh's own files, the global one or DNS); write it as a plain
+path (`~/` is fine). These options override the same ones in your ssh config.
 
 **Restrictions** are informational. They are shown by `ctun info` as guidance but are
 never enforced by `ctun` — the only hard enforcement is the budget guard below.
@@ -437,6 +477,23 @@ Before running a command whose first word is in `guard_commands` (`sbatch`, `sru
 
 Commands that aren't job submissions (`ls`, `squeue`, `sacct`, …) always pass through. If
 no limit is set for the cluster, it runs unguarded.
+
+By default only the **first word** counts, so `bash -c 'cd run && sbatch job.sh'` or
+`timeout 60 srun …` pass unchecked. Set `guard_scope: every-command` in a cluster's
+`budget` to have the guard look wherever a command can start:
+
+- in a script given to `bash -c`, `sh -c`, `eval`, `su -c`, `env -S` or `watch`, or the
+  command line of `ssh <host>`: after `;`, `&&`, `||`, `|`, `&`, braces and newlines, and
+  inside `$(…)` and backticks, even quoted ones. Comments, here-documents, redirection
+  targets and other quoted text are not commands;
+- the command a wrapper such as `env`, `nohup`, `timeout`, `nice`, `xargs`, `flock` or
+  `sudo` runs, after the wrapper's own options and arguments (`timeout 30 grep sbatch log`
+  runs grep, not sbatch);
+- after `find -exec`.
+
+A command nested too deeply to follow counts as a submission. The guard can't see into a
+script file (`bash submit_all.sh`, `./submit.sh`), a program's own code, or commands fed
+on stdin.
 
 The default metric is **job-hours**: the Slurm job *wall-clock* time you have run since the
 session started, counting only the portion of each job inside the session window (concurrent
@@ -483,13 +540,55 @@ control socket is local to that machine.
 
 ---
 
+## 🐍 Python API
+
+Programs can call what `ctun` does directly. `cluster_tunnel.api` has a function for each
+command, and the commands themselves are built on it, so the tunnel check, the budget
+guard, the session and the command log behave exactly as on the command line.
+
+```python
+from cluster_tunnel import api
+
+if api.is_live("horeka"):
+    result = api.run("horeka", ["squeue", "--me"], capture=True)
+    print(result.exit_code, result.stdout)
+
+try:
+    api.run("horeka", ["sbatch", "train.sh"], capture=True)
+except api.LoginRequired:
+    ...  # a person runs `ctun -t horeka login`
+except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
+    print(exc.decision.reason)
+```
+
+| Function | Does what |
+|---|---|
+| `login`, `logout`, `status`, `is_live` | `ctun login`, `logout`, `status`; the tunnel state |
+| `run`, `preflight` | `ctun run` (streamed, or `capture=True` with an optional `timeout`) and `run -n` |
+| `upload`, `download` | `ctun upload`, `download` (optionally `capture=True`) |
+| `jobs` | `ctun jobs` |
+| `host_key`, `pin_host_key` | `ctun hostkey`, `hostkey --pin`; pins only the fingerprint passed in, and replaces a trusted key only with `replace=True` |
+| `budget` | The guard's verdict for any submission right now, probed over the tunnel |
+| `feed_script` | Runs a local bash script on the login node; not guarded, for read-only probes |
+| `connection`, `clusters`, `load_config` | The resolved ssh target and control socket; the config |
+
+Failures raise `api.ClusterTunnelError` subclasses. The ones `ctun` reports with a stable
+exit code carry it as `exit_code` and `marker`: `LoginRequired` (10), `BudgetExhausted`
+(11) and `BudgetGuardError` (12). Each function reads the same config as `ctun`
+(`config_path=`, else `$CTUN_CONFIG`, else the default location) and, like `ctun`, must
+run on the machine that holds the tunnel. `cluster_tunnel.api` and `cluster_tunnel.errors`
+are the public interface and follow semantic versioning.
+
+---
+
 ## 📁 Files and locations
 
 | Path | Purpose |
 |---|---|
 | `~/.config/cluster-tunnel/config.yaml` | Your configuration. |
-| `~/.config/cluster-tunnel/config.yaml.bak` | The config as it was before the last `ctun config --migrate`. |
+| `~/.config/cluster-tunnel/config.yaml.bak` | The config as it was before the last `ctun config --migrate` or `ctun hostkey --pin`. |
 | `~/.config/cluster-tunnel/budget/<cluster>.sh` | Per-cluster budget scripts. |
+| `~/.config/cluster-tunnel/known_hosts` | Host keys pinned with `ctun hostkey --pin`, next to the config in use (on Windows, inside WSL). |
 | `~/.cache/cluster-tunnel/sockets/<cluster>` | SSH control sockets (the live tunnels). |
 | `~/.cache/cluster-tunnel/sessions/<cluster>.json` | Internal session state (start time, limit). |
 
@@ -505,6 +604,12 @@ folder exists; move the folder to switch over.
 If there is a feature you would like to see, or you run into any issue with the
 program, please [open an issue](https://github.com/aimat-lab/cluster-tunnel/issues/new)
 — feedback of any kind is very welcome.
+
+---
+
+## 📄 License
+
+cluster-tunnel is released under the [MIT License](./LICENSE).
 
 ---
 

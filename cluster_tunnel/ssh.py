@@ -17,7 +17,7 @@ from pathlib import Path, PurePath, PurePosixPath
 from typing import IO, Optional
 
 from cluster_tunnel import config as config_mod
-from cluster_tunnel import paths, wsl
+from cluster_tunnel import constants, paths, wsl
 from cluster_tunnel.config import Config
 
 
@@ -34,6 +34,8 @@ class ConnSpec:
     identity_file: str | None
     ssh_config: str | None = None  # alternative ssh config file, passed as -F
     wsl_distro: str | None = None  # Windows only; None means WSL's default distro
+    strict_host_key_checking: str = "accept-new"  # "yes" once the host key is pinned
+    known_hosts_file: str | None = None  # the pinned key's file; None means ssh's own
 
 
 def conn_spec(config: Config, name: str) -> ConnSpec:
@@ -55,6 +57,8 @@ def conn_spec(config: Config, name: str) -> ConnSpec:
         identity_file=cluster.identity_file,
         ssh_config=cluster.ssh_config or d.ssh_config,
         wsl_distro=d.wsl_distro,
+        strict_host_key_checking=cluster.strict_host_key_checking,
+        known_hosts_file=cluster.known_hosts_file,
     )
 
 
@@ -78,9 +82,46 @@ def _identity_opts(spec: ConnSpec) -> list[str]:
     return ["-i", _ssh_path(spec.identity_file)] if spec.identity_file else []
 
 
+def _known_hosts_opts(spec: ConnSpec) -> list[str]:
+    """Where ssh looks up the server's key: a pinned cluster's ``known_hosts_file`` only.
+
+    That file then replaces ssh's own known_hosts (quoted: ssh splits the value
+    at spaces), and the global file and DNS records are not consulted, so the
+    pinned key is the only one trusted. Unpinned, ssh's own files apply.
+    """
+    if not spec.known_hosts_file:
+        return []
+    return [
+        "-o", f'UserKnownHostsFile="{_ssh_path(spec.known_hosts_file)}"',
+        "-o", "GlobalKnownHostsFile=/dev/null",
+        "-o", "VerifyHostKeyDNS=no",
+    ]
+
+
+def _host_key_opts(spec: ConnSpec) -> list[str]:
+    """How the master checks the server's host key.
+
+    ``accept-new`` records an unknown key on first contact and refuses a changed
+    one; ``yes`` accepts only a key already known (see :func:`_known_hosts_opts`).
+    Command-line options win over the ssh config, so these always apply.
+    """
+    return ["-o", f"StrictHostKeyChecking={spec.strict_host_key_checking}", *_known_hosts_opts(spec)]
+
+
+def _pinned_opts(spec: ConnSpec) -> list[str]:
+    """For a pinned or strict cluster, its host-key options on every other ssh too.
+
+    Commands ride the master, but should its socket vanish, ssh connects on its
+    own (batch mode: only with a key); this keeps the pin on that connection.
+    An unpinned cluster's commands keep ssh's own settings, as before.
+    """
+    pinned = spec.known_hosts_file or spec.strict_host_key_checking == "yes"
+    return _host_key_opts(spec) if pinned else []
+
+
 def _socket_opts(spec: ConnSpec) -> list[str]:
     """Options to attach to an existing master via its control socket."""
-    return ["-S", str(spec.socket), *_config_opts(spec)]
+    return ["-S", str(spec.socket), *_config_opts(spec), *_pinned_opts(spec)]
 
 
 def control_opts(spec: ConnSpec) -> list[str]:
@@ -99,6 +140,7 @@ def control_opts(spec: ConnSpec) -> list[str]:
         "-o", "BatchMode=yes",
         *_config_opts(spec),
         *_identity_opts(spec),
+        *_pinned_opts(spec),
     ]
 
 
@@ -115,12 +157,71 @@ def open_master_argv(spec: ConnSpec, verbose: int = 0) -> list[str]:
         "-o", f"ControlPersist={spec.control_persist}",
         "-o", f"ServerAliveInterval={spec.server_alive_interval}",
         "-o", f"ServerAliveCountMax={spec.server_alive_count_max}",
-        "-o", "StrictHostKeyChecking=accept-new",
+        *_host_key_opts(spec),
         *_config_opts(spec),
         *_identity_opts(spec),
     ]
     argv += ["-N", "-f", spec.target]
     return argv
+
+
+#: A connection that only meets the server: a fresh one (no master, no
+#: multiplexing), no prompts, every authentication method off, so it fails
+#: right after the host-key exchange without a password or OTP, and nothing
+#: forwarded, so a server that does let it in gets no agent, X11 or ports.
+#: Should a server let it in unauthenticated, ``true`` is all that runs.
+_NO_LOGIN = [
+    "-o", "ControlMaster=no",
+    "-o", "ControlPath=none",
+    "-o", "BatchMode=yes",
+    "-o", "ConnectTimeout=20",
+    "-o", "PubkeyAuthentication=no",
+    "-o", "PasswordAuthentication=no",
+    "-o", "KbdInteractiveAuthentication=no",
+    "-o", "HostbasedAuthentication=no",
+    "-o", "GSSAPIAuthentication=no",
+    "-o", "ForwardAgent=no",
+    "-o", "ForwardX11=no",
+    "-o", "ClearAllForwardings=yes",
+    "-o", "PermitLocalCommand=no",
+    "-o", "UpdateHostKeys=no",
+]
+
+
+def check_opts(spec: ConnSpec) -> list[str]:
+    """ssh options that ask what a login would make of the server's key, without one.
+
+    Run with ``-v``, ssh says whether the key it is offered is known and
+    matches, is unknown, or differs from a known one, judged against exactly
+    the known_hosts files the master uses. Strict checking, so nothing is
+    recorded. The cluster's ssh config applies (``-F``, the alias's ProxyJump;
+    a jump host logs in as configured).
+    """
+    return [
+        *_NO_LOGIN,
+        "-o", "StrictHostKeyChecking=yes",
+        *_known_hosts_opts(spec),
+        *_config_opts(spec),
+    ]
+
+
+def scan_opts(spec: ConnSpec, algorithm: Optional[str] = None) -> list[str]:
+    """ssh options that fetch the server's host key without logging in.
+
+    The key is recorded in the known_hosts file the caller adds with
+    ``UserKnownHostsFile``, in plain form and always (the global file is not
+    consulted). ``algorithm`` (``HostKeyAlgorithms``) asks for the key a login
+    negotiates, which :func:`check_opts` reports.
+    """
+    return [
+        *_NO_LOGIN,
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "GlobalKnownHostsFile=/dev/null",
+        "-o", "HashKnownHosts=no",
+        "-o", "CheckHostIP=no",
+        *(["-o", f"HostKeyAlgorithms={algorithm}"] if algorithm else []),
+        *_config_opts(spec),
+    ]
 
 
 def check_argv(spec: ConnSpec) -> list[str]:
@@ -183,7 +284,7 @@ def open_master(spec: ConnSpec, verbose: int = 0) -> int:
     return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
 
 
-def _captured(
+def captured(
     spec: ConnSpec,
     argv: list[str],
     stdin: Optional[IO[bytes]] = None,
@@ -194,13 +295,14 @@ def _captured(
     Output is decoded as UTF-8 explicitly: the platform default (cp1252 on most
     Windows machines) would garble or reject non-ASCII text from the cluster. A
     missing launcher (no ssh, or no wsl.exe on Windows) comes back as exit code
-    127, and a ``timeout`` as exit code 124, instead of an exception.
+    127, and a ``timeout`` as exit code 124, instead of an exception. Without a
+    ``stdin`` the command reads nothing, so it can't take the caller's input.
     """
     full = wsl.launch(argv, spec.wsl_distro)
     try:
         return subprocess.run(
             full,
-            stdin=stdin,
+            stdin=subprocess.DEVNULL if stdin is None else stdin,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -219,7 +321,7 @@ def check(spec: ConnSpec) -> subprocess.CompletedProcess:
     Bounded by a timeout, so a WSL that hangs on Windows reads as "not live"
     instead of freezing ``status``, ``info`` or ``run``.
     """
-    return _captured(spec, check_argv(spec), timeout=wsl.QUICK_TIMEOUT)
+    return captured(spec, check_argv(spec), timeout=wsl.QUICK_TIMEOUT)
 
 
 def is_live(spec: ConnSpec) -> bool:
@@ -236,21 +338,29 @@ def run(spec: ConnSpec, tokens: list[str], *, tty: bool = False) -> int:
     return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
 
 
-def capture(spec: ConnSpec, tokens: list[str]) -> subprocess.CompletedProcess:
-    """Run a command over the tunnel and capture its output (no streaming)."""
-    return _captured(
-        spec, ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)]
+def capture(
+    spec: ConnSpec, tokens: list[str], timeout: Optional[float] = None
+) -> subprocess.CompletedProcess:
+    """Run a command over the tunnel and capture its output (no streaming).
+
+    After ``timeout`` seconds the local ssh is stopped and exit code 124 comes
+    back; the remote command may keep running on the cluster.
+    """
+    return captured(
+        spec,
+        ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)],
+        timeout=timeout,
     )
 
 
 def close(spec: ConnSpec) -> bool:
     """Cleanly tear down the master (`ssh -O exit`)."""
     argv = ["ssh", *_socket_opts(spec), "-O", "exit", spec.target]
-    return _captured(spec, argv, timeout=wsl.QUICK_TIMEOUT).returncode == 0
+    return captured(spec, argv, timeout=wsl.QUICK_TIMEOUT).returncode == 0
 
 
 def feed_script(
-    spec: ConnSpec, script_path: Path, args: list[object]
+    spec: ConnSpec, script_path: Path, args: list[object], timeout: Optional[float] = None
 ) -> subprocess.CompletedProcess:
     """Ship a local script over the tunnel and run it via `bash -s -- <args>`.
 
@@ -258,13 +368,16 @@ def feed_script(
     positional ``args`` are shell-quoted, so nothing installed on the cluster is
     required beyond ``bash``. stdout/stderr are captured for the caller to
     interpret. This is the shared transport for every ctun probe (budget usage,
-    job overview, ...).
+    job overview, ...). ``timeout`` works as in :func:`capture`.
     """
     quoted = " ".join(shlex.quote(str(a)) for a in args)
     remote = f"bash -s -- {quoted}" if quoted else "bash -s"
     with open(script_path, "rb") as fh:
-        return _captured(
-            spec, ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote], stdin=fh
+        return captured(
+            spec,
+            ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote],
+            stdin=fh,
+            timeout=timeout,
         )
 
 
@@ -276,4 +389,6 @@ def probe(
     Passes positional args ``<start_epoch> <cluster> <user>`` to the script and
     captures its stdout/stderr. The caller interprets the result.
     """
-    return feed_script(spec, script_path, [start_epoch, spec.name, user])
+    return feed_script(
+        spec, script_path, [start_epoch, spec.name, user], timeout=constants.PROBE_TIMEOUT
+    )

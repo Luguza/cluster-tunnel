@@ -101,12 +101,42 @@ def run_transfer(
     On Windows the local path is first translated for WSL, where rsync runs
     (:func:`wsl.to_wsl_path`); that raises :class:`wsl.WslError` if it fails.
     """
+    argv = _argv(spec, direction, src, dest, dry_run, extra, backend)
+    return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
+
+
+def capture_transfer(
+    spec: ConnSpec,
+    direction: Direction,
+    src: str,
+    dest: str,
+    *,
+    dry_run: bool = False,
+    extra: Sequence[str] = (),
+    backend: str = "rsync",
+) -> subprocess.CompletedProcess:
+    """:func:`run_transfer` with the tool's output captured as text, not streamed.
+
+    A missing tool comes back as exit code 127 (see :func:`ssh.captured`).
+    """
+    return ssh.captured(spec, _argv(spec, direction, src, dest, dry_run, extra, backend))
+
+
+def _argv(
+    spec: ConnSpec,
+    direction: Direction,
+    src: str,
+    dest: str,
+    dry_run: bool,
+    extra: Sequence[str],
+    backend: str,
+) -> list[str]:
+    """The transfer's argv, with the local path translated for WSL on Windows."""
     if wsl.enabled():
         if direction == "upload":
             src = wsl.to_wsl_path(src, spec.wsl_distro)
         else:
             dest = wsl.to_wsl_path(dest, spec.wsl_distro)
-    argv = get_backend(backend).argv(
+    return get_backend(backend).argv(
         spec, direction=direction, src=src, dest=dest, dry_run=dry_run, extra=list(extra)
     )
-    return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode

@@ -12,6 +12,19 @@ def _stdin_is_tty() -> bool:
     return sys.stdin.isatty()
 
 
+def _echo_diff(lines: list[str]) -> None:
+    """Print a unified diff of the config, colored like `git diff`."""
+    for line in lines:
+        if line.startswith(("+++", "---")):
+            click.secho(line, bold=True)
+        elif line.startswith("@@"):
+            click.secho(line, fg="cyan")
+        elif line.startswith(("+", "-")):
+            click.secho(line, fg="green" if line[0] == "+" else "red")
+        else:
+            click.echo(line)
+
+
 class ConfigCommandsMixin:
     """Mixin providing the `config` command."""
 
@@ -135,15 +148,7 @@ class ConfigCommandsMixin:
         for change in edit.changes:
             click.echo(f"  {change}")
         click.echo()
-        for line in edit.diff():
-            if line.startswith(("+++", "---")):
-                click.secho(line, bold=True)
-            elif line.startswith("@@"):
-                click.secho(line, fg="cyan")
-            elif line.startswith(("+", "-")):
-                click.secho(line, fg="green" if line[0] == "+" else "red")
-            else:
-                click.echo(line)
+        _echo_diff(edit.diff())
         click.echo()
         click.secho(
             "ctun 0.5.0 and older can't read the migrated file: update ctun on every "
