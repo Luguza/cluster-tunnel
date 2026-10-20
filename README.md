@@ -575,10 +575,15 @@ except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
 
 A program with its own login prompt (a window's masked field) hands the secrets
 straight to ssh; `Credentials` never prints them, and a cluster that requires a password
-or an OTP refuses the login without one before ssh starts:
+refuses the login without one before ssh starts. The OTP is advisory, as in the dialog.
+When the login fails, the `LoginError`'s `diagnostics` say why if ssh did (a refused
+host key, say, which no retyped password fixes):
 
 ```python
-api.login("horeka", credentials=api.Credentials(password, otp))
+try:
+    api.login("horeka", credentials=api.Credentials(password, otp))
+except api.LoginError as exc:
+    show(str(exc), exc.diagnostics)
 ```
 
 Failures raise `api.ClusterTunnelError` subclasses. The ones `ctun` reports with a stable

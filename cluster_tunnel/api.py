@@ -37,7 +37,7 @@ from cluster_tunnel import cmdlog, configedit
 from cluster_tunnel import config as config_mod
 from cluster_tunnel import hostkey as hostkey_mod
 from cluster_tunnel import jobs as jobs_mod
-from cluster_tunnel import session, ssh, wsl
+from cluster_tunnel import popup, session, ssh, wsl
 from cluster_tunnel import transfer as transfer_mod
 from cluster_tunnel.budget import Decision
 from cluster_tunnel.config import Cluster, Config
@@ -56,6 +56,7 @@ from cluster_tunnel.errors import (
 )
 from cluster_tunnel.hostkey import HostKey
 from cluster_tunnel.jobs import Job
+from cluster_tunnel.popup import Credentials
 from cluster_tunnel.ssh import ConnSpec
 
 __all__ = [
@@ -134,22 +135,6 @@ class ClusterJobs:
             "error": self.error,
             "jobs": [job.as_dict() for job in self.jobs],
         }
-
-
-@dataclass(frozen=True)
-class Credentials:
-    """A password and OTP for :func:`login`, from a program's own prompt.
-
-    Neither value is ever printed: the repr shows only which ones are set,
-    so a credentials object in a log line or a traceback leaks nothing.
-    """
-
-    password: str = field(default="", repr=False)
-    otp: str = field(default="", repr=False)
-
-    def __repr__(self) -> str:
-        shown = ", ".join(f"{name}=***" for name in ("password", "otp") if getattr(self, name))
-        return f"Credentials({shown})"
 
 
 @dataclass
@@ -314,14 +299,17 @@ def login(
     terminal; with it, a dialog lets a present person enter them, and they go
     straight to ssh. ``credentials`` are a password and OTP the calling program
     asked for itself (a window's masked field, say): they go to ssh the same
-    way, with no dialog and no terminal, and a cluster that requires one
-    refuses the login without it before ssh starts. A tunnel that is already up is kept, and so is its session.
-    A new tunnel starts a new session (and an empty command log) whose limit is
-    ``limit``, else the dialog's, else the cluster's ``session_limit``; a
-    negative limit means unguarded. ``verbose`` (0-3) adds ssh's ``-v`` flags.
+    way, with no dialog and no terminal, and a cluster that requires a password
+    refuses the login without one before ssh starts. A tunnel that is already
+    up is kept, and so is its session. A new tunnel starts a new session (and
+    an empty command log) whose limit is the dialog's, else ``limit``, else the
+    credentials', else the cluster's ``session_limit``; a negative limit means
+    unguarded. ``verbose`` (0-3) adds ssh's ``-v`` flags.
 
     Raises :class:`LoginError` when the tunnel can't be opened or the dialog is
-    cancelled or can't be shown.
+    cancelled or can't be shown; its ``diagnostics`` hold what ssh said about
+    why. Raises ``ValueError`` when given both ``credentials`` and
+    ``interactive``.
     """
     if interactive and credentials is not None:
         raise ValueError("pass credentials or interactive, not both")
@@ -346,47 +334,36 @@ def login(
     chosen_limit = default_limit
     if already_live:
         pass
-    elif credentials is not None:
-        from cluster_tunnel import popup
-
-        missing = [what for what, needed, given in (
-            ("a password", entry.requires_password, credentials.password),
-            ("an OTP", entry.requires_otp, credentials.otp),
-        ) if needed and not given]
-        if missing:
-            raise LoginError(f"'{cluster}' requires {' and '.join(missing)}.", cluster)
+    elif interactive or credentials is not None:
+        if credentials is None:
+            if not popup.gui_available():
+                raise LoginError(
+                    f"No display for the login dialog; run `ctun -t {cluster} login` from a terminal.",
+                    cluster,
+                )
+            credentials = popup.prompt_credentials(
+                cluster, spec.target, default_limit, unit,
+                entry.requires_otp, entry.requires_password,
+            )
+            if credentials is None:
+                raise LoginError("Login cancelled.", cluster)
+            chosen_limit = credentials.limit
+            failed = f"Interactive login to '{cluster}' failed or timed out."
+        else:
+            # As the dialog: the password is required, the OTP advisory (some
+            # sites skip it from a trusted network).
+            if entry.requires_password and not credentials.password:
+                raise LoginError(f"'{cluster}' requires a password.", cluster)
+            if limit is None and credentials.limit is not None:
+                chosen_limit = credentials.limit
+            failed = f"Login to '{cluster}' with the given credentials failed or timed out."
         try:
-            ok = popup.login_with_password(spec, credentials.password,
-                                           credentials.otp or None, timeout, verbose)
+            live, trouble = popup.open_with_password(
+                spec, credentials.password, credentials.otp or None, timeout, verbose)
         except wsl.WslError as exc:
             raise LoginError(str(exc), cluster) from exc
-        if not ok:
-            raise LoginError(
-                f"Login to '{cluster}' with the given credentials failed or timed out.",
-                cluster, ssh_failed=True)
-    elif interactive:
-        from cluster_tunnel import popup
-
-        if not popup.gui_available():
-            raise LoginError(
-                f"No display for the login dialog; run `ctun -t {cluster} login` from a terminal.",
-                cluster,
-            )
-        creds = popup.prompt_credentials(
-            cluster, spec.target, default_limit, unit,
-            entry.requires_otp, entry.requires_password,
-        )
-        if creds is None:
-            raise LoginError("Login cancelled.", cluster)
-        try:
-            ok = popup.login_with_password(spec, creds.password, creds.otp, timeout, verbose)
-        except wsl.WslError as exc:
-            raise LoginError(str(exc), cluster) from exc
-        if not ok:
-            raise LoginError(
-                f"Interactive login to '{cluster}' failed or timed out.", cluster, ssh_failed=True
-            )
-        chosen_limit = creds.limit
+        if not live:
+            raise LoginError(failed, cluster, ssh_failed=True, diagnostics=trouble.strip() or None)
     else:
         try:
             rc = ssh.open_master(spec, verbose)

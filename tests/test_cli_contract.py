@@ -285,11 +285,23 @@ def test_interactive_login_that_fails(tmp_path: Path, monkeypatch) -> None:
     _tunnel(monkeypatch, False)
     monkeypatch.setattr(popup, "gui_available", lambda: True)
     monkeypatch.setattr(popup, "prompt_credentials", lambda *a, **k: popup.Credentials("pw", None, None))
-    monkeypatch.setattr(popup, "login_with_password", lambda *a, **k: False)
+    monkeypatch.setattr(popup, "open_with_password", lambda *a, **k: (False, ""))
     r = _invoke("-t", "localhost", "login", "-i")
     assert r.exit_code == 1
     assert "Interactive login to 'localhost' failed or timed out." in _norm(r)
     assert session.load("localhost") is None
+
+
+def test_interactive_login_that_fails_shows_why(tmp_path: Path, monkeypatch) -> None:
+    _config(tmp_path, monkeypatch)
+    _tunnel(monkeypatch, False)
+    monkeypatch.setattr(popup, "gui_available", lambda: True)
+    monkeypatch.setattr(popup, "prompt_credentials", lambda *a, **k: popup.Credentials("pw", None, None))
+    monkeypatch.setattr(popup, "open_with_password",
+                        lambda *a, **k: (False, "Host key verification failed.\n"))
+    r = _invoke("-t", "localhost", "login", "-i")
+    assert r.exit_code == 1
+    assert "Host key verification failed." in _norm(r)
 
 
 def test_interactive_login_reports_a_wsl_error(tmp_path: Path, monkeypatch) -> None:
@@ -301,7 +313,7 @@ def test_interactive_login_reports_a_wsl_error(tmp_path: Path, monkeypatch) -> N
     def broken(*args, **kwargs):
         raise wsl.WslError("WSL did not respond")
 
-    monkeypatch.setattr(popup, "login_with_password", broken)
+    monkeypatch.setattr(popup, "open_with_password", broken)
     r = _invoke("-t", "localhost", "login", "-i")
     assert r.exit_code == 1
     assert "WSL did not respond" in _norm(r)
@@ -320,10 +332,10 @@ def test_interactive_login_uses_the_dialog_and_its_limit(tmp_path: Path, monkeyp
 
     def fake_login(spec, password, otp, timeout, verbose):
         logins.append((spec.name, password, otp, timeout, verbose))
-        return True
+        return True, ""
 
     monkeypatch.setattr(popup, "prompt_credentials", fake_prompt)
-    monkeypatch.setattr(popup, "login_with_password", fake_login)
+    monkeypatch.setattr(popup, "open_with_password", fake_login)
     r = _invoke("-t", "c", "login", "-i", "--timeout", "30")
     assert r.exit_code == 0, r.output
     assert "established (interactive)" in _norm(r)

@@ -363,7 +363,7 @@ def test_interactive_login_result(cfg: Path, monkeypatch) -> None:
     _live(monkeypatch, False)
     monkeypatch.setattr(popup, "gui_available", lambda: True)
     monkeypatch.setattr(popup, "prompt_credentials", lambda *a: popup.Credentials("pw", "1", -1))
-    monkeypatch.setattr(popup, "login_with_password", lambda *a: True)
+    monkeypatch.setattr(popup, "open_with_password", lambda *a: (True, ""))
     result = api.login("c", interactive=True)
     assert result.interactive and not result.already_live
     assert result.session["limit"] is None  # a negative limit means unguarded
@@ -589,46 +589,64 @@ def _otp_cluster(cfg: Path) -> None:
         "    host: h\n", "    host: h\n    requires_otp: true\n", 1), encoding="utf-8")
 
 
+def _pty(monkeypatch, live: bool = True, trouble: str = "") -> list:
+    seen: list = []
+    monkeypatch.setattr(popup, "open_with_password",
+                        lambda spec, pw, otp, timeout, verbose: seen.append((pw, otp)) or (live, trouble))
+    return seen
+
+
 def test_credentials_go_to_ssh_without_a_dialog(cfg: Path, monkeypatch) -> None:
     _otp_cluster(cfg)
     _live(monkeypatch, False)
-    seen = []
     monkeypatch.setattr(popup, "prompt_credentials", lambda *a: pytest.fail("no dialog"))
-    monkeypatch.setattr(popup, "login_with_password",
-                        lambda spec, pw, otp, timeout, verbose: seen.append((pw, otp)) or True)
+    seen = _pty(monkeypatch)
     result = api.login("c", credentials=api.Credentials("s3cret", "123456"))
     assert seen == [("s3cret", "123456")]
     assert not result.interactive and not result.already_live
     assert result.session["limit"] == 3.0  # the configured limit, as a plain login
 
 
-@pytest.mark.parametrize("creds, missing", [
-    (api.Credentials("", "123456"), "requires a password"),
-    (api.Credentials("s3cret", ""), "requires an OTP"),
-    (api.Credentials(), "requires a password and an OTP"),
-])
-def test_a_required_secret_that_is_missing_stops_before_ssh(cfg: Path, monkeypatch, creds,
-                                                           missing) -> None:
-    _otp_cluster(cfg)
+@pytest.mark.parametrize("creds", [api.Credentials("", "123456"), api.Credentials()])
+def test_a_missing_password_stops_before_ssh(cfg: Path, monkeypatch, creds) -> None:
     _live(monkeypatch, False)
-    monkeypatch.setattr(popup, "login_with_password", lambda *a: pytest.fail("ssh started"))
-    with pytest.raises(api.LoginError, match=missing):
+    monkeypatch.setattr(popup, "open_with_password", lambda *a: pytest.fail("ssh started"))
+    with pytest.raises(api.LoginError, match="requires a password"):
         api.login("c", credentials=creds)
 
 
-def test_a_failed_credentials_login_names_no_secret(cfg: Path, monkeypatch) -> None:
+def test_the_otp_is_advisory_as_in_the_dialog(cfg: Path, monkeypatch) -> None:
+    # Some sites skip the OTP from a trusted network; the dialog lets it be blank too.
+    _otp_cluster(cfg)
     _live(monkeypatch, False)
-    monkeypatch.setattr(popup, "login_with_password", lambda *a: False)
+    seen = _pty(monkeypatch)
+    api.login("c", credentials=api.Credentials("s3cret"))
+    assert seen == [("s3cret", None)]
+
+
+@pytest.mark.parametrize("limit, given, expected", [(None, 7.0, 7.0), (5.0, 7.0, 5.0), (None, -1.0, None)])
+def test_the_credentials_limit_stands_in_for_the_argument(cfg: Path, monkeypatch, limit, given,
+                                                          expected) -> None:
+    _live(monkeypatch, False)
+    _pty(monkeypatch)
+    result = api.login("c", credentials=api.Credentials("s3cret", limit=given), limit=limit)
+    assert result.session["limit"] == expected
+
+
+def test_a_failed_credentials_login_says_why_and_names_no_secret(cfg: Path, monkeypatch) -> None:
+    _live(monkeypatch, False)
+    _pty(monkeypatch, live=False, trouble="Host key verification failed.\n")
     with pytest.raises(api.LoginError) as caught:
         api.login("c", credentials=api.Credentials("s3cret-pw", "998877"))
-    text = f"{caught.value!s} {caught.value!r} {caught.value.args!r}"
+    text = f"{caught.value!s} {caught.value!r} {caught.value.args!r} {caught.value.diagnostics}"
     assert caught.value.ssh_failed
+    assert caught.value.diagnostics == "Host key verification failed."
     assert "s3cret-pw" not in text and "998877" not in text
 
 
 def test_a_live_tunnel_needs_no_credentials(cfg: Path, monkeypatch) -> None:
     _live(monkeypatch, True)
-    monkeypatch.setattr(popup, "login_with_password", lambda *a: pytest.fail("ssh started"))
+    monkeypatch.setattr(popup, "open_with_password", lambda *a: pytest.fail("ssh started"))
     assert api.login("c", credentials=api.Credentials("s3cret")).already_live
 
 
@@ -638,8 +656,9 @@ def test_credentials_and_the_dialog_are_one_or_the_other(cfg: Path) -> None:
 
 
 def test_credentials_never_print_their_values() -> None:
-    for creds in (api.Credentials("s3cret", "123456"),
-                  popup.Credentials("s3cret", "123456", 5.0)):
-        assert "s3cret" not in repr(creds) and "123456" not in repr(creds)
-        assert "s3cret" not in str(creds)
+    assert api.Credentials is popup.Credentials  # the dialog's answer is the same type
+    creds = api.Credentials("s3cret", "123456", 5.0)
+    assert "s3cret" not in repr(creds) and "123456" not in repr(creds)
+    assert "s3cret" not in str(creds)
+    assert repr(creds) == "Credentials(password=***, otp=***, limit=5.0)"
     assert repr(api.Credentials("s3cret")) == "Credentials(password=***)"

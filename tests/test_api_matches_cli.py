@@ -182,7 +182,7 @@ def _master(monkeypatch, *, before: bool, after: bool, rc: int = 0) -> None:
 def _dialog(monkeypatch, creds: Optional[popup.Credentials], ok: bool = True) -> None:
     monkeypatch.setattr(popup, "gui_available", lambda: True)
     monkeypatch.setattr(popup, "prompt_credentials", lambda *a: creds)
-    monkeypatch.setattr(popup, "login_with_password", lambda *a: ok)
+    monkeypatch.setattr(popup, "open_with_password", lambda *a: (ok, ""))
 
 
 LOGIN_CASES = {
