@@ -63,8 +63,8 @@ __all__ = [
     "load_config", "clusters", "connection", "is_live", "status", "login", "logout",
     "preflight", "budget", "run", "feed_script", "upload", "download", "jobs",
     "host_key", "pin_host_key",
-    # results
-    "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
+    # results and inputs
+    "Credentials", "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
     "Decision", "Job", "HostKey", "ConnSpec", "Config", "Cluster",
     # errors
     "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
@@ -134,6 +134,22 @@ class ClusterJobs:
             "error": self.error,
             "jobs": [job.as_dict() for job in self.jobs],
         }
+
+
+@dataclass(frozen=True)
+class Credentials:
+    """A password and OTP for :func:`login`, from a program's own prompt.
+
+    Neither value is ever printed: the repr shows only which ones are set,
+    so a credentials object in a log line or a traceback leaks nothing.
+    """
+
+    password: str = field(default="", repr=False)
+    otp: str = field(default="", repr=False)
+
+    def __repr__(self) -> str:
+        shown = ", ".join(f"{name}=***" for name in ("password", "otp") if getattr(self, name))
+        return f"Credentials({shown})"
 
 
 @dataclass
@@ -285,6 +301,7 @@ def login(
     cluster: str,
     *,
     interactive: bool = False,
+    credentials: Optional[Credentials] = None,
     limit: Optional[float] = None,
     timeout: int = DEFAULT_LOGIN_TIMEOUT,
     verbose: int = 0,
@@ -295,7 +312,10 @@ def login(
 
     Without ``interactive``, ssh asks for the password and OTP in this process's
     terminal; with it, a dialog lets a present person enter them, and they go
-    straight to ssh. A tunnel that is already up is kept, and so is its session.
+    straight to ssh. ``credentials`` are a password and OTP the calling program
+    asked for itself (a window's masked field, say): they go to ssh the same
+    way, with no dialog and no terminal, and a cluster that requires one
+    refuses the login without it before ssh starts. A tunnel that is already up is kept, and so is its session.
     A new tunnel starts a new session (and an empty command log) whose limit is
     ``limit``, else the dialog's, else the cluster's ``session_limit``; a
     negative limit means unguarded. ``verbose`` (0-3) adds ssh's ``-v`` flags.
@@ -303,6 +323,8 @@ def login(
     Raises :class:`LoginError` when the tunnel can't be opened or the dialog is
     cancelled or can't be shown.
     """
+    if interactive and credentials is not None:
+        raise ValueError("pass credentials or interactive, not both")
     config, _ = _load(config, config_path)
     entry = _entry(config, cluster)
     spec = ssh.conn_spec(config, cluster)
@@ -324,6 +346,24 @@ def login(
     chosen_limit = default_limit
     if already_live:
         pass
+    elif credentials is not None:
+        from cluster_tunnel import popup
+
+        missing = [what for what, needed, given in (
+            ("a password", entry.requires_password, credentials.password),
+            ("an OTP", entry.requires_otp, credentials.otp),
+        ) if needed and not given]
+        if missing:
+            raise LoginError(f"'{cluster}' requires {' and '.join(missing)}.", cluster)
+        try:
+            ok = popup.login_with_password(spec, credentials.password,
+                                           credentials.otp or None, timeout, verbose)
+        except wsl.WslError as exc:
+            raise LoginError(str(exc), cluster) from exc
+        if not ok:
+            raise LoginError(
+                f"Login to '{cluster}' with the given credentials failed or timed out.",
+                cluster, ssh_failed=True)
     elif interactive:
         from cluster_tunnel import popup
 

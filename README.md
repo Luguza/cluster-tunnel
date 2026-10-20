@@ -564,7 +564,7 @@ except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
 
 | Function | Does what |
 |---|---|
-| `login`, `logout`, `status`, `is_live` | `ctun login`, `logout`, `status`; the tunnel state |
+| `login`, `logout`, `status`, `is_live` | `ctun login`, `logout`, `status`; the tunnel state. `login(credentials=api.Credentials(password, otp))` takes a password and OTP from the program's own prompt instead of the terminal or the dialog |
 | `run`, `preflight` | `ctun run` (streamed, or `capture=True` with an optional `timeout`) and `run -n` |
 | `upload`, `download` | `ctun upload`, `download` (optionally `capture=True`) |
 | `jobs` | `ctun jobs` |
@@ -572,6 +572,14 @@ except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
 | `budget` | The guard's verdict for any submission right now, probed over the tunnel |
 | `feed_script` | Runs a local bash script on the login node; not guarded, for read-only probes |
 | `connection`, `clusters`, `load_config` | The resolved ssh target and control socket; the config |
+
+A program with its own login prompt (a window's masked field) hands the secrets
+straight to ssh; `Credentials` never prints them, and a cluster that requires a password
+or an OTP refuses the login without one before ssh starts:
+
+```python
+api.login("horeka", credentials=api.Credentials(password, otp))
+```
 
 Failures raise `api.ClusterTunnelError` subclasses. The ones `ctun` reports with a stable
 exit code carry it as `exit_code` and `marker`: `LoginRequired` (10), `BudgetExhausted`

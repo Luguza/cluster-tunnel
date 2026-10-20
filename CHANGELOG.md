@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Login with credentials from the caller.** `api.login(cluster,
+  credentials=api.Credentials(password, otp))` opens the tunnel with a password and OTP
+  that a program asked for itself, such as a window's masked field: they go to ssh as
+  the login dialog's do, with no dialog and no terminal. A cluster that requires a
+  password or an OTP refuses the login without it before ssh starts, and
+  `credentials` with `interactive=True` is refused.
+
+### Security
+
+- **Credentials never print.** `api.Credentials` shows only which secrets are set, and
+  the login dialog's answer (`popup.Credentials`) no longer prints the password and
+  OTP in its repr, so a log line or a traceback that holds either leaks nothing.
+
 ## [0.7.1] - 2026-10-20
 
 ### Changed
