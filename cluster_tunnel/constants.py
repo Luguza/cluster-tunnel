@@ -26,9 +26,9 @@ LEGACY_APP_AUTHOR = "jonas"
 DEFAULT_GUARD_COMMANDS = ["sbatch", "srun", "salloc"]
 
 #: SSH ControlMaster defaults.
-DEFAULT_CONTROL_PERSIST = "12h"
+DEFAULT_CONTROL_PERSIST = "7d"
 DEFAULT_SERVER_ALIVE_INTERVAL = 60
-DEFAULT_SERVER_ALIVE_COUNT_MAX = 3
+DEFAULT_SERVER_ALIVE_COUNT_MAX = 10
 
 #: Seconds a probe over the tunnel (budget usage, job list, remote user) may take;
 #: a probe that takes longer fails like any other (budget: per ``fail_mode``).

@@ -23,7 +23,8 @@ def test_load_and_defaults(tmp_path: Path) -> None:
     c = cfg.load_config(str(p))
     assert "c" in c.clusters
     assert c.defaults.socket_dir  # filled by the loader
-    assert c.defaults.control_persist == "12h"
+    assert c.defaults.control_persist == "7d"
+    assert c.defaults.server_alive_count_max == 10
 
 
 def test_resolve_target_variants() -> None:

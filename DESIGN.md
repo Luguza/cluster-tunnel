@@ -53,7 +53,7 @@ Paths (defaults, configurable):
 
 | `ctun` action | Underlying ssh |
 |---|---|
-| **open master** (`login`) | `ssh -M -S <sock> -o ControlPersist=<ttl> -o ServerAliveInterval=<n> -o ServerAliveCountMax=3 -fN <target>` |
+| **open master** (`login`) | `ssh -M -S <sock> -o ControlPersist=<ttl> -o ServerAliveInterval=<n> -o ServerAliveCountMax=<m> -fN <target>` |
 | **run a command** (`run`) | `ssh -S <sock> -o BatchMode=yes <target> <remote-cmd>` |
 | **check liveness** (`status`) | `ssh -O check -S <sock> <target>` |
 | **close master** (`logout`) | `ssh -O exit -S <sock> <target>` |
@@ -272,8 +272,9 @@ preserving comments, switch the loader to `ruamel.yaml`.
 
 ```yaml
 defaults:
-  control_persist: "12h"        # master lifetime; "yes" = until reboot/logout
+  control_persist: "7d"         # how long an unused master stays up; "yes" = until reboot/logout
   server_alive_interval: 60     # keepalive seconds, fights idle disconnects
+  server_alive_count_max: 10    # missed keepalives before the master gives up
   socket_dir: "~/.cache/cluster-tunnel/sockets"
   terminal: auto                # login --interactive popup: auto|gnome-terminal|xfce4-terminal|zenity
 

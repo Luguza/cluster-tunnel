@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-10-20
+
+### Changed
+
+- **Tunnels last longer by default.** `control_persist` now defaults to `7d` (was
+  `12h`): an unused tunnel stays up for a week after its last command, so it
+  survives a night or a weekend without a new login. `server_alive_count_max` now
+  defaults to `10` (was `3`): with the 60 s keepalive, a tunnel rides out about 10
+  minutes without a reply from the server (a VPN reconnect, a brief network outage)
+  instead of 3. A dead connection takes correspondingly longer to be noticed. Configs
+  that set either key keep their value; a config written by `ctun config --init`
+  before 0.7.1 sets `control_persist: "12h"` explicitly. The new values apply from the
+  next `ctun login`.
+
 ## [0.7.0] - 2026-10-20
 
 ### Added

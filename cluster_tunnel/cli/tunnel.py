@@ -27,8 +27,10 @@ class TunnelCommandsMixin:
         lightweight channel inside that already-authenticated connection, so no
         password or OTP is needed again for the life of the tunnel.
 
-        The tunnel stays up for `control_persist` (configurable; 12h by default)
-        or until the network drops or you `logout`. Logging in also starts a
+        The tunnel stays up while it is used and for `control_persist` after
+        its last command (configurable; 7d by default). It closes earlier if
+        the network is gone for longer than the keepalives allow (about 10
+        minutes by default) or when you `logout`. Logging in also starts a
         fresh budget *session*: the compute-budget guard measures usage from
         this moment onward, and the limit comes from `-l/--limit`, falling back
         to the cluster's configured `session_limit`.

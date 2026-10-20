@@ -407,8 +407,9 @@ Config lives at `~/.config/cluster-tunnel/config.yaml` (override with `$CTUN_CON
 ```yaml
 # Defaults inherited by every cluster (each is overridable per cluster).
 defaults:
-  control_persist: "12h"          # how long the tunnel stays alive; "yes" = until reboot/logout
+  control_persist: "7d"           # how long an unused tunnel stays up; "yes" = until reboot/logout
   server_alive_interval: 60       # keepalive seconds; fights idle disconnects
+  server_alive_count_max: 10      # missed keepalives before giving up: rides out ~10 min outages
   # ssh_config: ~/.ssh/config_hpc # optional: alternative ssh config file (ssh -F); also per cluster
   # wsl_distro: Ubuntu            # Windows only: WSL distro that runs ssh (default distro if unset)
   terminal: auto                  # reserved for future use
