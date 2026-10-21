@@ -69,11 +69,12 @@ from cluster_tunnel.ssh import ConnSpec
 __all__ = [
     # operations
     "load_config", "clusters", "connection", "is_live", "status", "login", "logout",
-    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs", "edit_job", "projects",
-    "host_key", "pin_host_key",
+    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs",
+    "edit_job", "projects", "rename_project", "host_key", "pin_host_key",
     # results and inputs
     "Credentials", "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
-    "ClusterProjects", "RecordEdit", "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
+    "ClusterProjects", "ProjectRename", "RecordEdit",
+    "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
     # errors
     "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
     "LoginError", "BudgetBlocked", "BudgetExhausted", "BudgetGuardError", "TransportError",
@@ -209,6 +210,21 @@ class ClusterProjects:
 
     def as_dict(self) -> dict:
         """The entry as ``ctun projects list --json`` prints it."""
+        return asdict(self)
+
+
+@dataclass
+class ProjectRename:
+    """What :func:`rename_project` changed on one cluster."""
+
+    cluster: str
+    live: bool
+    job_records: bool  # false: the cluster keeps no records, so it was skipped
+    error: Optional[str] = None
+    renamed: list[str] = field(default_factory=list)  # the IDs of the jobs whose record changed
+
+    def as_dict(self) -> dict:
+        """The entry as ``ctun projects rename --json`` prints it."""
         return asdict(self)
 
 
@@ -883,6 +899,48 @@ def projects(
         if spec is not None:
             try:
                 item.projects = records_mod.projects(records_mod.list_all(spec))
+            except RuntimeError as exc:
+                item.error = str(exc)
+        results.append(item)
+    return results
+
+
+def rename_project(
+    old: str,
+    new: str,
+    cluster: Optional[str] = None,
+    *,
+    config: Optional[Config] = None,
+    config_path: Optional[PathLike] = None,
+) -> list[ProjectRename]:
+    """Rename project ``old`` to ``new`` in every job record, as ``ctun projects rename``.
+
+    The projects nested in ``old`` move along: renaming ``htfm`` to
+    ``archive/htfm`` makes ``htfm/mh`` ``archive/htfm/mh``. If ``new`` exists
+    already, the jobs join it. Each change is logged in the record like
+    :func:`edit_job`, and the records go back to the cluster a few dozen per
+    SSH call. Works on ``cluster``, or on every configured cluster with a live
+    tunnel; a down cluster keeps ``old``, so call it again once it is logged in,
+    which is safe. Raises ``ValueError`` for an empty ``new``.
+    """
+    if not new.strip("/"):
+        raise ValueError("the new project name is empty")
+    config, _ = _load(config, config_path)
+    results: list[ProjectRename] = []
+    for spec, item in _record_clusters(config, cluster, ProjectRename):
+        if spec is not None:
+            try:
+                changed = []
+                for current in records_mod.list_all_raw(spec):
+                    job_id = str(current.get("job_id"))
+                    project = records_mod.renamed_project(current.get("project"), old, new)
+                    if project is None:
+                        continue
+                    updated = records_mod.edited(current, job_id, project=project, note=None, confirm_note=False)
+                    if updated is not None:
+                        changed.append(updated)
+                records_mod.update_many(spec, changed)
+                item.renamed = [str(record["job_id"]) for record in changed]
             except RuntimeError as exc:
                 item.error = str(exc)
         results.append(item)

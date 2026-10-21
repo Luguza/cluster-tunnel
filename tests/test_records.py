@@ -548,3 +548,41 @@ def test_projects_list_marks_a_cluster_without_records(tmp_path: Path, monkeypat
     r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "list", "--json"])
     (entry,) = json.loads(r.stdout)["clusters"]
     assert entry["job_records"] is False and entry["error"] is None and entry["projects"] == []
+
+
+# --- renaming a project (ctun projects rename) ------------------------------------
+
+
+def test_projects_rename_renames_the_nested_projects_too(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "7": {"job_id": "7", "project": "htfm"},
+        "8": {"job_id": "8", "project": "htfm/mh"},
+        "9": {"job_id": "9", "project": "htfmx"},
+        "10": {"job_id": "10", "project": None},
+    }
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "htfm", "archive/htfm", "--json"])
+    assert r.exit_code == 0, r.output
+    (entry,) = json.loads(r.stdout)["clusters"]
+    assert entry == {"cluster": "localhost", "live": True, "job_records": True, "error": None, "renamed": ["7", "8"]}
+    assert cluster.update_calls == 1
+    projects = {job_id: record["project"] for job_id, record in cluster.written.items()}
+    assert projects == {"7": "archive/htfm", "8": "archive/htfm/mh", "9": "htfmx", "10": None}
+    assert cluster.written["8"]["changes"][-1]["project"] == ["htfm/mh", "archive/htfm/mh"]
+
+
+def test_projects_rename_refuses_an_empty_name(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_job(monkeypatch, FakeCluster())
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "htfm", "/"])
+    assert r.exit_code == 2 and "NEW is empty" in r.output
+
+
+def test_projects_rename_skips_a_down_tunnel(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_job(monkeypatch, FakeCluster())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: False)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "htfm", "eval"])
+    assert r.exit_code == 0 and "tunnel down" in r.output

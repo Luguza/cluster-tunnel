@@ -116,6 +116,15 @@ def projects(records: list[JobRecord]) -> list[dict[str, Any]]:
     return [{"project": project, "jobs": counts[project]} for project in sorted(counts)]
 
 
+def renamed_project(project: Optional[str], old: str, new: str) -> Optional[str]:
+    """``project`` once ``old`` is renamed to ``new``, with the projects nested in ``old``; ``None`` if it is neither."""
+    if project == old:
+        return new
+    if project and project.startswith(f"{old}/"):
+        return new + project[len(old):]
+    return None
+
+
 def build(
     job_id: str,
     facts: JobFacts,
@@ -253,6 +262,11 @@ def list_recent(spec: ConnSpec, since_minutes: int, job_ids: list[str]) -> list[
 def list_all(spec: ConnSpec) -> list[JobRecord]:
     """Every record on the cluster."""
     return _read(spec, ["all"])
+
+
+def list_all_raw(spec: ConnSpec) -> list[dict[str, Any]]:
+    """Every record on the cluster as stored, keys this ctun does not know included."""
+    return _read_raw(spec, ["all"])
 
 
 def _read(spec: ConnSpec, args: list[object]) -> list[JobRecord]:
