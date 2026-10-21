@@ -7,8 +7,9 @@
 # Commands (invoked by ctun as `bash -s -- <command> <args...>`):
 #
 #   write <job_id> <base64 JSON>   store a new record; refuses to overwrite (exit 4)
-#   update <job_id> <base64 JSON>  store a record in place of the job's current one,
-#                                  or as its first
+#   update <job_id> <base64 JSON> [<job_id> <base64 JSON>...]
+#                                  store each record in place of the job's current
+#                                  one, or as its first
 #   list <since_minutes> [job_id...]
 #                                  print the records written in the last
 #                                  <since_minutes> minutes (0 = none) and those of
@@ -69,10 +70,12 @@ case "$command" in
         fi
         ;;
     update)
-        job_id="${1:?job id required}"
-        payload="${2:?record required}"
-        tmp="$(decode_to_temp "$job_id" "$payload")" || exit 5
-        mv -f "$tmp" "$dir/$job_id.json"
+        : "${2:?job id and record required}"
+        while [ "$#" -ge 2 ]; do
+            tmp="$(decode_to_temp "$1" "$2")" || exit 5
+            mv -f "$tmp" "$dir/$1.json"
+            shift 2
+        done
         ;;
     list)
         since_min="${1:-0}"
@@ -97,7 +100,7 @@ case "$command" in
         done
         ;;
     *)
-        echo "usage: records.sh write|update <job_id> <base64> | list <since_minutes> [job_id...] | all" >&2
+        echo "usage: records.sh write <job_id> <base64> | update (<job_id> <base64>)... | list <since_minutes> [job_id...] | all" >&2
         exit 2
         ;;
 esac

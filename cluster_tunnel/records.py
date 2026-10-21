@@ -28,6 +28,10 @@ SCRIPT_PATH = Path(__file__).parent / "scripts" / "records.sh"
 
 SCHEMA_VERSION = 1
 
+#: Characters of records per ``update`` call: its SSH command line must stay under
+#: Windows' 32767-character limit for wsl.exe, and Linux's 128 KiB per argument on the cluster.
+_UPDATE_BATCH_CHARS = 24_000
+
 
 @dataclass
 class JobRecord:
@@ -156,12 +160,36 @@ def write(spec: ConnSpec, record: JobRecord) -> None:
 
 def update(spec: ConnSpec, record: dict[str, Any]) -> None:
     """Store the raw ``record`` on the cluster in place of the job's current one, or as its first."""
-    document = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
-    payload = base64.b64encode(document.encode("utf-8")).decode("ascii")
-    res = ssh.feed_script(spec, SCRIPT_PATH, ["update", record["job_id"], payload])
-    if res.returncode != 0:
-        detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
-        raise RuntimeError(f"could not store the record of job {record['job_id']}: {detail}")
+    update_many(spec, [record])
+
+
+def update_many(spec: ConnSpec, records: list[dict[str, Any]]) -> None:
+    """Store each raw record like :func:`update`, many per SSH call; raises :class:`RuntimeError` at the first failed call."""
+    for batch in _update_batches(records):
+        res = ssh.feed_script(spec, SCRIPT_PATH, ["update", *batch])
+        if res.returncode != 0:
+            detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
+            job_ids = ", ".join(batch[0::2])
+            raise RuntimeError(f"could not store the records of jobs {job_ids}: {detail}")
+
+
+def _update_batches(records: list[dict[str, Any]]) -> list[list[str]]:
+    """``[job_id, base64 record, ...]`` lists of at most ``_UPDATE_BATCH_CHARS`` each, or one record if it is longer."""
+    batches: list[list[str]] = []
+    batch: list[str] = []
+    batch_chars = 0
+    for record in records:
+        document = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+        pair = [str(record["job_id"]), base64.b64encode(document.encode("utf-8")).decode("ascii")]
+        pair_chars = sum(len(part) + 1 for part in pair)
+        if batch and batch_chars + pair_chars > _UPDATE_BATCH_CHARS:
+            batches.append(batch)
+            batch, batch_chars = [], 0
+        batch += pair
+        batch_chars += pair_chars
+    if batch:
+        batches.append(batch)
+    return batches
 
 
 def read(spec: ConnSpec, job_id: str) -> Optional[dict[str, Any]]:

@@ -85,6 +85,13 @@ def test_update_overwrites_a_record_and_creates_a_missing_one(tmp_path: Path, ba
     assert sorted(path.name for path in folder.iterdir()) == ["101.json", "102.json"]  # no temp files left
 
 
+def test_update_stores_several_records_in_one_call(tmp_path: Path, bash: str) -> None:
+    pairs = ["101", _b64({"job_id": "101"}), "102", _b64({"job_id": "102"})]
+    assert _run(bash, tmp_path, "records.sh", "update", *pairs).returncode == 0
+    listed = _run(bash, tmp_path, "records.sh", "list", "0", "101", "102").stdout.splitlines()
+    assert [json.loads(line)["job_id"] for line in listed] == ["101", "102"]
+
+
 def test_all_with_an_empty_folder_is_empty(tmp_path: Path, bash: str) -> None:
     (tmp_path / "home" / ".ctun" / "jobs" / "haic").mkdir(parents=True)
     result = _run(bash, tmp_path, "records.sh", "all")
