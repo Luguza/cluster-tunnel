@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nested in it (`htfm/mh` → `archive/htfm/mh`). Each change is logged in the
   record like `jobs edit`, and the records go back a few dozen per SSH call
   (`records.sh update` takes several records).
+- **Credentials on stdin.** `ctun login --credentials-stdin` reads the password,
+  OTP and session limit as JSON on stdin and logs in with them, as
+  `api.login(credentials=...)` does: for front ends such as the VS Code extension,
+  whose own input boxes ask the human.
 
 ## [0.8.0] - 2026-10-20
 
