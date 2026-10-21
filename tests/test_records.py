@@ -34,6 +34,7 @@ class FakeCluster:
         self.known_refs = known_refs
         self.written: dict[str, dict] = {}
         self.note_checks: list[list] = []
+        self.update_calls = 0
 
     def feed_script(self, spec, script_path: Path, args: list, timeout=None) -> subprocess.CompletedProcess:
         assert script_path == records.SCRIPT_PATH
@@ -47,8 +48,9 @@ class FakeCluster:
                 return subprocess.CompletedProcess([], self.facts_rc, "", "squeue: not found")
             return subprocess.CompletedProcess([], 0, f"{FACTS_OUTPUT}submitted_ago={self.submitted_ago}\n", "")
         if command in ("write", "update"):
-            job_id, payload = rest
-            self.written[job_id] = json.loads(base64.b64decode(payload))
+            self.update_calls += command == "update"
+            for job_id, payload in zip(rest[0::2], rest[1::2]):
+                self.written[job_id] = json.loads(base64.b64decode(payload))
             return subprocess.CompletedProcess([], 0, "", "")
         lines = "\n".join(json.dumps(record) for record in self.written.values())
         return subprocess.CompletedProcess([], 0, lines, "")
@@ -495,3 +497,11 @@ def test_jobs_edit_stops_at_the_first_failing_job(tmp_path: Path, monkeypatch) -
     r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "999", "--project", "new"])
     assert r.exit_code != 0 and "999 is unknown" in r.output
     assert cluster.written["7"]["project"] == "new" and "999" not in cluster.written
+
+
+def test_update_many_splits_the_records_into_batches_that_fit_a_command_line(monkeypatch) -> None:
+    cluster = FakeCluster()
+    monkeypatch.setattr("cluster_tunnel.ssh.feed_script", cluster.feed_script)
+    many = [{"job_id": str(job_id), "note": "x" * 1000} for job_id in range(100)]
+    records.update_many(object(), many)
+    assert len(cluster.written) == 100 and cluster.update_calls > 1
