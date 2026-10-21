@@ -30,6 +30,28 @@ def _stdin_credentials():
     return api.Credentials(password=password, otp=otp, limit=None if limit is None else float(limit))
 
 
+def _logged_in_through_vscode(name: str, default_limit: float | None, config) -> bool:
+    """True once the VS Code window that started the agent has logged in; False if no window took it.
+
+    A tunnel that is up already needs no window: `api.login` keeps it.
+    """
+    import os
+
+    from cluster_tunnel import api, vscode_login
+
+    if not os.environ.get(vscode_login.BRIDGE_VARIABLE) or api.is_live(name, config=config):
+        return False
+    try:
+        outcome = vscode_login.log_in(name, default_limit)
+    except vscode_login.Unavailable:
+        return False
+    if outcome.status == "cancelled":
+        raise click.ClickException("Login cancelled.")
+    if outcome.status != "live":
+        raise click.ClickException(f"Login to '{name}' in VS Code failed: {outcome.message}")
+    return True
+
+
 class TunnelCommandsMixin:
     """Mixin providing the tunnel lifecycle commands."""
 
@@ -71,7 +93,8 @@ class TunnelCommandsMixin:
         the service password and one-time passcode (OTP) in separate fields,
         which are fed to ssh at their respective prompts — the agent never sees
         the secrets. A front end that asks the human itself passes them with
-        `--credentials-stdin` instead.
+        `--credentials-stdin` instead. Inside a VS Code window with the ctun
+        extension, that window asks in its own input boxes instead of the pop-up.
 
         Pass `-v` (or `-vv`/`-vvv`) to surface ssh's own connection diagnostics
         when a login fails — useful for debugging host, auth, or network errors.
@@ -83,22 +106,33 @@ class TunnelCommandsMixin:
 
         if interactive and credentials_stdin:
             raise click.UsageError("Give -i/--interactive or --credentials-stdin, not both.")
+        from cluster_tunnel import session
+
         config = self.load_config()
-        name, _ = self.resolve_cluster(config)
-        credentials = _stdin_credentials() if credentials_stdin else None
-        try:
-            result = api.login(
-                name, interactive=interactive, credentials=credentials, limit=limit, timeout=timeout,
-                verbose=verbose, config=config, config_path=self.config_path,
-            )
-        except api.LoginError as exc:
-            if exc.diagnostics:
-                click.echo(exc.diagnostics, err=True)
-            hint = " Re-run with -v (or -vv/-vvv) for ssh diagnostics." if exc.ssh_failed and not verbose else ""
-            raise click.ClickException(f"{exc}{hint}") from exc
+        name, entry = self.resolve_cluster(config)
+        default_limit = limit if limit is not None else (entry.budget.session_limit if entry.budget else None)
+        in_vscode = interactive and _logged_in_through_vscode(name, default_limit, config)
+        if in_vscode:
+            # The window's own `login --credentials-stdin` opened the tunnel and started the session.
+            target = api.connection(name, config=config).target
+            result = api.LoginResult(name, target, False, True, None, session.load(name) or {}, False)
+        else:
+            credentials = _stdin_credentials() if credentials_stdin else None
+            try:
+                result = api.login(
+                    name, interactive=interactive, credentials=credentials, limit=limit, timeout=timeout,
+                    verbose=verbose, config=config, config_path=self.config_path,
+                )
+            except api.LoginError as exc:
+                if exc.diagnostics:
+                    click.echo(exc.diagnostics, err=True)
+                hint = " Re-run with -v (or -vv/-vvv) for ssh diagnostics." if exc.ssh_failed and not verbose else ""
+                raise click.ClickException(f"{exc}{hint}") from exc
 
         # The styled top line of the success panel.
-        if result.already_live:
+        if in_vscode:
+            headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green] [dim](in VS Code)[/dim]."
+        elif result.already_live:
             headline = f"[yellow]●[/yellow] Tunnel to [cyan]{name}[/cyan] is [yellow]already live[/yellow]."
         elif result.interactive:
             headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green] [dim](interactive)[/dim]."
