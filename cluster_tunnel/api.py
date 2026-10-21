@@ -93,6 +93,8 @@ class Result:
     exit_code: int
     stdout: Optional[str] = None
     stderr: Optional[str] = None
+    #: The IDs of every ``Submitted batch job <N>`` line a :func:`run` printed; empty with ``tty``.
+    job_ids: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -575,7 +577,9 @@ def run(
     The output streams to this process's stdout and stderr, or, with
     ``capture``, comes back in the :class:`Result`; ``tty`` needs streaming.
     ``timeout`` (seconds, captured output only) stops waiting with exit code
-    124; the remote command may keep running on the cluster.
+    124; the remote command may keep running on the cluster. The IDs of the
+    jobs the command submitted go into the :class:`Result` and the command log;
+    with ``tty`` ctun doesn't see the output, so there are none.
     """
     if capture and tty:
         raise ValueError("a TTY needs streamed output; pass capture=False")
@@ -588,11 +592,20 @@ def run(
     if on_preflight is not None:
         on_preflight(decision)
     # Log the command (not its output) so `status` can show activity.
-    cmdlog.record(cluster, tokens)
+    entry_id = cmdlog.record(cluster, tokens)
+    if tty:
+        return Result(ssh.run(spec, tokens, tty=True))
     if capture:
         res = ssh.capture(spec, tokens, timeout=timeout)
-        return Result(res.returncode, res.stdout, res.stderr)
-    return Result(ssh.run(spec, tokens, tty=tty))
+        result = Result(res.returncode, res.stdout, res.stderr)
+        output = res.stdout or ""
+    else:
+        returncode, output = ssh.run_capturing(spec, tokens)
+        result = Result(returncode)
+    result.job_ids = jobs_mod.submitted_job_ids(output)
+    if result.job_ids:
+        cmdlog.record_jobs(cluster, entry_id, result.job_ids)
+    return result
 
 
 def feed_script(

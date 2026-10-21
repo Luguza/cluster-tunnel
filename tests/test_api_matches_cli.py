@@ -89,6 +89,7 @@ def _stub_run(monkeypatch, live: bool, decision: Optional[Decision], rc: int) ->
     monkeypatch.setattr("cluster_tunnel.budget.decide", fake_decide)
     monkeypatch.setattr(cmdlog, "record", lambda name, tokens: calls["record"].append((name, list(tokens))))
     monkeypatch.setattr(ssh, "run", lambda spec, tokens, tty=False: calls["run"].append((list(tokens), tty)) or rc)
+    monkeypatch.setattr(ssh, "run_capturing", lambda spec, tokens: (ssh.run(spec, tokens), ""))
     return calls
 
 

@@ -557,6 +557,7 @@ def _patch_run(monkeypatch, *, live=True, decision=None, run_rc=0) -> None:
     monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: object())
     monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: live)
     monkeypatch.setattr("cluster_tunnel.ssh.run", lambda spec, tokens, tty=False: run_rc)
+    monkeypatch.setattr("cluster_tunnel.ssh.run_capturing", lambda spec, tokens: (run_rc, ""))
     monkeypatch.setattr("cluster_tunnel.cmdlog.record", lambda name, tokens: None)
     if decision is not None:
         monkeypatch.setattr("cluster_tunnel.budget.decide", lambda *a, **k: decision)

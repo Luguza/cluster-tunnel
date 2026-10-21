@@ -8,6 +8,7 @@ the split, and the active/finished ordering — so the CLI layer only renders.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from cluster_tunnel import constants, ssh
 from cluster_tunnel.ssh import ConnSpec
 
 PACKAGE_DIR = Path(__file__).parent
+
+_SUBMITTED_JOB = re.compile(r"^Submitted batch job (\d+)", re.MULTILINE)
 
 #: The bundled probe shipped over the tunnel; universal across Slurm clusters.
 SCRIPT_PATH = PACKAGE_DIR / "scripts" / "jobs.sh"
@@ -57,6 +60,11 @@ class Overview:
     #: Slurm's ``ClusterName`` (what jobs see as ``SLURM_CLUSTER_NAME``); ``None`` if unknown.
     slurm_cluster: str | None
     jobs: list[Job]
+
+
+def submitted_job_ids(output: str) -> list[str]:
+    """The job IDs of every ``Submitted batch job <N>`` line in ``output``."""
+    return _SUBMITTED_JOB.findall(output)
 
 
 def parse_cluster_name(lines: list[str]) -> str | None:

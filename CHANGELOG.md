@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cluster's Slurm `ClusterName` in `slurm_cluster`, the value jobs see as
   `SLURM_CLUSTER_NAME` (`null` when unknown), so a front end can match a job to
   tags like `slurm:<ClusterName>:<job id>`.
+- **The job IDs a command submitted.** The command log keeps the IDs of the jobs
+  each `ctun run` submitted (every `Submitted batch job <N>` line of its output).
+  `ctun logs` shows them after the command (`→ job 4818213`), `ctun logs --json`
+  gives them as `job_ids`, and `api.run()` returns them in `Result.job_ids`. The
+  output still streams as it arrives. A `--tty` run logs none: ctun does not see
+  its output. Older logs still read.
 
 ## [0.8.0] - 2026-10-20
 

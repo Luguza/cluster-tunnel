@@ -117,6 +117,7 @@ def test_run_order_preflight_hook_log_then_command(cfg: Path, monkeypatch) -> No
     calls = _decide(monkeypatch, decision)
     monkeypatch.setattr(cmdlog, "record", lambda name, tokens: events.append(("record", name, tokens)))
     monkeypatch.setattr(ssh, "run", lambda spec, tokens, tty=False: events.append(("run", tokens, tty)) or 7)
+    monkeypatch.setattr(ssh, "run_capturing", lambda spec, tokens: (ssh.run(spec, tokens), ""))
 
     result = api.run("c", ("sbatch", "j.sh"), on_preflight=lambda d: events.append(("hook", d)))
     assert result == api.Result(7, None, None) and not result.ok
@@ -152,7 +153,7 @@ def test_run_capture_returns_the_output(cfg: Path, monkeypatch) -> None:
     ],
 )
 def test_run_rejects_contradictory_options(cfg: Path, monkeypatch, kwargs, error) -> None:
-    _forbid(monkeypatch, "cluster_tunnel.ssh.is_live", "cluster_tunnel.ssh.run")
+    _forbid(monkeypatch, "cluster_tunnel.ssh.is_live", "cluster_tunnel.ssh.run", "cluster_tunnel.ssh.run_capturing")
     with pytest.raises(error):
         api.run("c", ["ls"], **kwargs)
 
@@ -167,7 +168,7 @@ def test_a_command_is_an_argv_list(cfg: Path, monkeypatch) -> None:
 
 def test_without_a_tunnel_nothing_runs(cfg: Path, monkeypatch) -> None:
     _live(monkeypatch, False)
-    _forbid(monkeypatch, "cluster_tunnel.budget.decide", "cluster_tunnel.cmdlog.record", "cluster_tunnel.ssh.run")
+    _forbid(monkeypatch, "cluster_tunnel.budget.decide", "cluster_tunnel.cmdlog.record", "cluster_tunnel.ssh.run", "cluster_tunnel.ssh.run_capturing")
     with pytest.raises(api.LoginRequired) as info:
         api.run("c", ["squeue"])
     exc = info.value
@@ -188,7 +189,7 @@ def test_without_a_tunnel_nothing_runs(cfg: Path, monkeypatch) -> None:
 def test_a_blocked_submission_raises_and_runs_nothing(cfg: Path, monkeypatch, decision, error, code, marker) -> None:
     _live(monkeypatch)
     _decide(monkeypatch, decision)
-    _forbid(monkeypatch, "cluster_tunnel.cmdlog.record", "cluster_tunnel.ssh.run")
+    _forbid(monkeypatch, "cluster_tunnel.cmdlog.record", "cluster_tunnel.ssh.run", "cluster_tunnel.ssh.run_capturing")
     with pytest.raises(error) as info:
         api.run("c", ["sbatch", "j.sh"])
     exc = info.value
@@ -204,7 +205,7 @@ def test_preflight_returns_the_decision_and_runs_nothing(cfg: Path, monkeypatch)
     _live(monkeypatch)
     decision = Decision(True, "within budget: 1.0 < 3.0 jobh", 1.0, 3.0, "jobh")
     _decide(monkeypatch, decision)
-    _forbid(monkeypatch, "cluster_tunnel.cmdlog.record", "cluster_tunnel.ssh.run")
+    _forbid(monkeypatch, "cluster_tunnel.cmdlog.record", "cluster_tunnel.ssh.run", "cluster_tunnel.ssh.run_capturing")
     assert api.preflight("c", ["sbatch", "j.sh"]) is decision
 
 
