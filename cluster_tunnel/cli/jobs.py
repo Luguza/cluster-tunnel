@@ -73,7 +73,8 @@ class JobsCommandsMixin:
         are noted, never logged in to). For each cluster a bundled probe runs
         `squeue` (your running + pending jobs) and, unless `--since 0`, `sacct`
         (jobs that finished within the window) on the login node over the live
-        tunnel — read-only, so it is never budget-guarded.
+        tunnel — read-only, so it is never budget-guarded. `--json` includes
+        each job's record.
         """
         from cluster_tunnel import api
 
@@ -86,7 +87,8 @@ class JobsCommandsMixin:
         results = [
             entry.as_dict()
             for entry in api.jobs(
-                self.target or None, since_minutes=since_minutes, config=config, config_path=self.config_path
+                self.target or None, since_minutes=since_minutes, with_records=as_json,
+                config=config, config_path=self.config_path,
             )
         ]
 

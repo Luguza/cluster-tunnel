@@ -81,7 +81,10 @@ of a *single* job as it changes state, use `Monitor` (see
 
 With `--json`, each cluster entry names its `slurm_cluster`: Slurm's own
 `ClusterName`, which jobs see as `SLURM_CLUSTER_NAME` (`null` when unknown or the
-tunnel is down).
+tunnel is down). Each job carries its `record` (see [Job records](#job-records), or
+`null`), and each cluster entry lists `records_without_job`: records written in
+the window whose job is no longer listed. `records_error` reports a failure to
+read the records; the jobs are still listed.
 
 ## `info` — cluster briefing
 
@@ -159,7 +162,7 @@ ctun -t <cluster> hostkey --pin [-y|--yes]
 ## `run` — run a command through the tunnel
 
 ```
-ctun -t <cluster> run [--tty] [-n|--dry-run] -- <command> [args...]
+ctun -t <cluster> run [--tty] [-n|--dry-run] [--project NAME] [--note TEXT] -- <command> [args...]
 ```
 
 - Everything after `--` is forwarded to the cluster **exactly as written**.
@@ -177,6 +180,32 @@ budget to stderr before the command's own output, so it never pollutes stdout.
 ```
 ctun -t haicore run -- squeue --me
 ctun -t haicore run -- bash -c 'cd $WORK && sbatch job.sh'
+```
+
+### Job records
+
+For every `Submitted batch job <N>` line in the output, `run` stores a
+**job record** on the cluster, in `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`.
+Every machine that submits to that cluster sees the same records. A record is
+written once and never changed. It holds:
+
+- `--project NAME` and `--note TEXT`, if given (both optional);
+- facts ctun collects itself, never from you: the job's name and working
+  directory (from Slurm), and the git state there at submit time (`commit`,
+  `branch`, `pushed`, `uncommitted` files), plus the command, the submitting
+  host and the time.
+
+A fact ctun cannot read is stored as `null` with a warning; it never blocks the
+submission. The command's output and exit code are unchanged. Records are off
+with `--tty` (the output is not read) and for a cluster with
+`job_records: false` in the config.
+
+**Notes are drafts for the human.** Put only facts from this session into
+`--note` (what changed and why), never guesses about results. When unsure,
+leave the note out.
+
+```
+ctun -t haicore run --project htfm --note "lr 1e-3, rerun after the OOM" -- bash -c 'cd $REPO && ./submit.sh'
 ```
 
 ## `upload` / `download` — transfer files over the tunnel
