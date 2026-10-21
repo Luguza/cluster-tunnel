@@ -109,6 +109,14 @@ class ExecutionCommandsMixin:
             )
         except api.LoginRequired as exc:
             fail(str(exc), exc.exit_code)
+        except api.NoteReferenceInvalid as exc:
+            hint = (
+                "\n  Commit references are looked up in the repos of this project's earlier"
+                " records. Fix or drop them, or leave the note out."
+                if exc.unknown
+                else ""
+            )
+            fail(f"Not run: {exc}.{hint}", exc.exit_code)
         except api.BudgetBlocked as exc:
             if dry_run:
                 # Exit with the would-be failure code so `run -n` is a usable preflight.

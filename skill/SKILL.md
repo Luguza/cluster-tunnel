@@ -160,9 +160,9 @@ Tips:
   `MSYS_NO_PATHCONV=1`, and keep scripts LF; see the Windows section of
   [reference.md](reference.md).
 - Every submission gets a job record on the cluster. Give `--project` to group
-  it. Put only facts from this session into `--note`, and leave the note out
-  when unsure; the human reviews it. Details in
-  [reference.md](reference.md#job-records).
+  it. Put only facts from this session into `--note`, mark references as
+  `commit:<hash>` / `job:<id>`, and leave the note out when unsure; the human
+  reviews it. Details in [reference.md](reference.md#job-records).
 - After submitting a job, don't poll `squeue` by hand — set up a live monitor
   that wakes you on state changes and failures: see
   [monitoring-jobs.md](monitoring-jobs.md).

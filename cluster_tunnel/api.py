@@ -38,6 +38,7 @@ from cluster_tunnel import config as config_mod
 from cluster_tunnel import facts as facts_mod
 from cluster_tunnel import hostkey as hostkey_mod
 from cluster_tunnel import jobs as jobs_mod
+from cluster_tunnel import notes as notes_mod
 from cluster_tunnel import popup, session, ssh, wsl
 from cluster_tunnel import records as records_mod
 from cluster_tunnel import transfer as transfer_mod
@@ -52,6 +53,7 @@ from cluster_tunnel.errors import (
     HostKeyError,
     LoginError,
     LoginRequired,
+    NoteReferenceInvalid,
     TransportError,
     UnknownClusterError,
     budget_blocked,
@@ -73,7 +75,7 @@ __all__ = [
     # errors
     "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
     "LoginError", "BudgetBlocked", "BudgetExhausted", "BudgetGuardError", "TransportError",
-    "HostKeyError",
+    "HostKeyError", "NoteReferenceInvalid",
 ]
 
 PathLike = Union[str, Path]
@@ -610,7 +612,10 @@ def run(
     For each submitted job, unless the cluster has ``job_records: false``, a
     record is stored on the cluster: ``project``, ``note``, and the facts ctun
     collects there itself (job name, working directory, the git state in it). A
-    fact or record that can't be had only adds to ``Result.warnings``.
+    fact or record that can't be had only adds to ``Result.warnings``. The
+    ``commit:<hash>`` and ``job:<id>`` references in a ``note`` that will be
+    stored are checked on the cluster first: one it doesn't know raises
+    :class:`NoteReferenceInvalid`, and nothing runs.
     """
     if capture and tty:
         raise ValueError("a TTY needs streamed output; pass capture=False")
@@ -620,6 +625,8 @@ def run(
     config, path = _load(config, config_path)
     spec = _spec(config, cluster)
     decision = _preflight(config, path, cluster, spec, tokens)
+    if note and not tty and config.clusters[cluster].job_records:
+        _check_note(spec, note, project)
     if on_preflight is not None:
         on_preflight(decision)
     # Log the command (not its output) so `status` can show activity.
@@ -804,6 +811,18 @@ def _host_keys(cluster: str, action: str, call: Callable):
         return call()
     except RuntimeError as exc:
         raise HostKeyError(f"cannot {action} the host key of '{cluster}': {exc}") from exc
+
+
+def _check_note(spec: ConnSpec, note: str, project: Optional[str]) -> None:
+    """Raise :class:`NoteReferenceInvalid` if ``note`` names a commit or job the cluster doesn't know."""
+    try:
+        unknown = notes_mod.unknown_references(spec, note, project)
+    except RuntimeError as exc:
+        raise NoteReferenceInvalid(str(exc)) from exc
+    if unknown:
+        raise NoteReferenceInvalid(
+            "the note names references the cluster does not know: " + ", ".join(unknown), unknown
+        )
 
 
 def _write_records(

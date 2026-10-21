@@ -323,6 +323,7 @@ reserved for ctun's pre-flight failures:
 | `10` | `login_required` | No live tunnel — run `login` again. |
 | `11` | `budget_exhausted` | A guarded command was blocked: session usage is at/over the limit. |
 | `12` | `budget_guard_error` | A guarded command was blocked because the budget could not be verified (fail-closed). |
+| `13` | `note_reference_invalid` | `run --note` names a `commit:<hash>` or `job:<id>` the cluster does not know; nothing ran. |
 | *N* | — | The remote command's **own** exit code (0–255), propagated unchanged. |
 | `2` | — | Usage error (e.g. no command after `--`). |
 
@@ -588,7 +589,7 @@ except api.LoginError as exc:
 
 Failures raise `api.ClusterTunnelError` subclasses. The ones `ctun` reports with a stable
 exit code carry it as `exit_code` and `marker`: `LoginRequired` (10), `BudgetExhausted`
-(11) and `BudgetGuardError` (12). Each function reads the same config as `ctun`
+(11), `BudgetGuardError` (12) and `NoteReferenceInvalid` (13). Each function reads the same config as `ctun`
 (`config_path=`, else `$CTUN_CONFIG`, else the default location) and, like `ctun`, must
 run on the machine that holds the tunnel. `cluster_tunnel.api` and `cluster_tunnel.errors`
 are the public interface and follow semantic versioning.

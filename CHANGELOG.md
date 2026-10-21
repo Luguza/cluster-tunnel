@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`api.jobs(with_records=True)`) attaches each job's `record` and lists
   `records_without_job` per cluster. Turn it off per cluster with
   `job_records: false`.
+- **Checked references in notes.** `ctun run --note` checks its `commit:<hash>`
+  and `job:<id>` references on the cluster before running, and refuses with the
+  new exit code 13 (`note_reference_invalid`, `api.NoteReferenceInvalid`) if one
+  is unknown. Commits are looked up in the repos of the project's earlier records.
 
 ## [0.8.0] - 2026-10-20
 
