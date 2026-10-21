@@ -200,7 +200,7 @@ the cluster's description is still one string: say so and leave
 ## `login` — authenticate and open the tunnel
 
 ```
-ctun -t <cluster> login [-i|--interactive] [-l|--limit N] [--timeout S] [-v]
+ctun -t <cluster> login [-i|--interactive | --credentials-stdin] [-l|--limit N] [--timeout S] [-v]
 ```
 
 - Opens the persistent SSH master connection. This is the only step needing the
@@ -209,6 +209,10 @@ ctun -t <cluster> login [-i|--interactive] [-l|--limit N] [--timeout S] [-v]
   present human enters the credentials; the secret is fed to ssh directly and
   **never exposed to the agent**. Use this whenever you (an agent) trigger a
   login. `--timeout S` bounds the wait (default 120s).
+- `--credentials-stdin`: for front ends that ask the human themselves (the VS
+  Code extension): read `{"password": ..., "otp": ..., "limit": ...}` as JSON on
+  stdin, then log in like `-i`. `limit` is optional. **Agents never use this**:
+  they never hold the secrets.
 - `-l, --limit N`: this session's compute budget, overriding the cluster's
   configured `session_limit`. `-1` means infinite / unguarded.
 - `-v` (repeatable `-vv`/`-vvv`): surface ssh's own diagnostics on failure.

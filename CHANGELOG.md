@@ -66,6 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`records.sh update` takes several records). A record another machine edits
   meanwhile is renamed again from its new state, not overwritten; `jobs edit`
   does the same. If storing fails partway, `renamed` still lists what was stored.
+- **Credentials on stdin.** `ctun login --credentials-stdin` reads the password,
+  OTP and session limit as JSON on stdin and logs in with them, as
+  `api.login(credentials=...)` does: for front ends such as the VS Code extension,
+  whose own input boxes ask the human.
 
 ### Changed
 
