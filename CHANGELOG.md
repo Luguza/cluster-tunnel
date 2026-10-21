@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output still streams as it arrives. A `--tty` run logs none: ctun does not see
   its output. Older logs still read.
 - **Job records.** For each `Submitted batch job <N>` in its output, `ctun run`
-  stores a write-once record on the cluster in
+  stores a record on the cluster in
   `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`, so every machine sees it. It holds
   the new optional `--project` and `--note` (`api.run(project=, note=)`), and
   facts ctun collects itself: job name and working directory from Slurm, and the
@@ -36,6 +36,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `job:<id>` references on the cluster before running, and refuses with the
   new exit code 13 (`note_reference_invalid`, `api.NoteReferenceInvalid`) if one
   is unknown. Commits are looked up in the repos of the project's earlier records.
+- **Editing a job's project and note.** `ctun -t <cluster> jobs edit <id>...`
+  with `--project`, `--note` or `--confirm-note` (`api.edit_job()`) gives one or
+  more jobs' records the same change on the cluster, so every machine and agent
+  sees it, and prints the resulting records as a JSON list. An empty value clears
+  it (Unassigned, no note). A changed note is unconfirmed until `--confirm-note`.
+  Each edit is logged in the record's `changes` as old and new value; the facts
+  from submit time are never changed. For a job that has no record (e.g. one
+  submitted with plain `sbatch`), `jobs edit` creates one without facts, so older
+  jobs can join projects too. Records gain `note_confirmed` and `changes`.
+  `ctun jobs list` names the overview next to `jobs edit`; plain `ctun jobs` works
+  as before.
 
 ## [0.8.0] - 2026-10-20
 

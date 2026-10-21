@@ -115,6 +115,11 @@ class NoteReferenceInvalid(ClusterTunnelError):
         self.unknown = list(unknown)
 
 
+class RecordError(ClusterTunnelError):
+    """A job record could not be changed: the job is unknown, the cluster keeps no
+    records, there is no note to confirm, or the record could not be read or stored."""
+
+
 class TransportError(ClusterTunnelError):
     """The transport around ssh failed (on Windows: the WSL bridge)."""
 

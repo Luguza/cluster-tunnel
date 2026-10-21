@@ -74,7 +74,8 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
 the Rich-formatted help. One file per command domain:
 
 - `tunnel.py` — `login`, `status`, `logout`
-- `jobs.py` — `jobs` (Slurm job overview; grouped under Tunnel)
+- `jobs.py` — the `jobs` group: the Slurm job overview (`jobs`, `jobs list`) and
+  `jobs edit` (change a job's record); grouped under Tunnel
 - `hostkey.py` — `hostkey` (show / pin the server's host key; grouped under Tunnel)
 - `execution.py` — `run` (budget-guarded command execution)
 - `transfer.py` — `upload`, `download`

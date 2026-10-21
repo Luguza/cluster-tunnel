@@ -569,6 +569,7 @@ except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
 | `run`, `preflight` | `ctun run` (streamed, or `capture=True` with an optional `timeout`) and `run -n`; `project=`/`note=` go into the job records, and the `Result` lists the submitted `job_ids` and the `records` written |
 | `upload`, `download` | `ctun upload`, `download` (optionally `capture=True`) |
 | `jobs` | `ctun jobs`; `with_records=True` also reads each job's record |
+| `edit_job` | `ctun jobs edit` for one job: a new project or note in its record |
 | `host_key`, `pin_host_key` | `ctun hostkey`, `hostkey --pin`; pins only the fingerprint passed in, and replaces a trusted key only with `replace=True` |
 | `budget` | The guard's verdict for any submission right now, probed over the tunnel |
 | `feed_script` | Runs a local bash script on the login node; not guarded, for read-only probes |
