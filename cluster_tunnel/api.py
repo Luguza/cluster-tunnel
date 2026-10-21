@@ -54,6 +54,7 @@ from cluster_tunnel.errors import (
     LoginError,
     LoginRequired,
     NoteReferenceInvalid,
+    RecordError,
     TransportError,
     UnknownClusterError,
     budget_blocked,
@@ -67,15 +68,15 @@ from cluster_tunnel.ssh import ConnSpec
 __all__ = [
     # operations
     "load_config", "clusters", "connection", "is_live", "status", "login", "logout",
-    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs",
+    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs", "edit_job",
     "host_key", "pin_host_key",
     # results and inputs
     "Credentials", "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
-    "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
+    "RecordEdit", "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
     # errors
     "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
     "LoginError", "BudgetBlocked", "BudgetExhausted", "BudgetGuardError", "TransportError",
-    "HostKeyError", "NoteReferenceInvalid",
+    "HostKeyError", "NoteReferenceInvalid", "RecordError",
 ]
 
 PathLike = Union[str, Path]
@@ -188,6 +189,17 @@ class LogoutResult:
 
     cluster: str
     was_live: bool
+
+
+@dataclass
+class RecordEdit:
+    """One job's record after :func:`edit_job`."""
+
+    job_id: str
+    #: The record as stored, keys this ctun doesn't know included; ``None`` for a
+    #: job without one that the edit left alone.
+    record: Optional[dict]
+    changed: bool  # false: the record had these values already, nothing was stored
 
 
 @dataclass
@@ -769,6 +781,48 @@ def jobs(
                 item.records_error = str(exc)
         results.append(item)
     return results
+
+
+def edit_job(
+    cluster: str,
+    job_id: str,
+    *,
+    project: Optional[str] = None,
+    note: Optional[str] = None,
+    confirm_note: bool = False,
+    config: Optional[Config] = None,
+    config_path: Optional[PathLike] = None,
+) -> RecordEdit:
+    """Give job ``job_id``'s record a new ``project`` or ``note``, as ``ctun jobs edit``.
+
+    ``None`` keeps a value, ``""`` clears it. A new note is unconfirmed unless
+    ``confirm_note``, which a person's review sets; its references are checked
+    as in :func:`run` (:class:`NoteReferenceInvalid`). Each change is logged in
+    the record's ``changes``; the facts from submit time never change. A job
+    without a record (e.g. one submitted with plain ``sbatch``) gets one without
+    facts, if Slurm knows it. Raises :class:`LoginRequired` without a live
+    tunnel and :class:`RecordError` when the job is unknown, the cluster keeps
+    no records, there is no note to confirm, or the record can't be stored.
+    """
+    config, _ = _load(config, config_path)
+    spec = _spec(config, cluster)
+    if not ssh.is_live(spec):
+        raise LoginRequired(cluster)
+    if not config.clusters[cluster].job_records:
+        raise RecordError(f"job_records is off for '{cluster}'.")
+    try:
+        current = records_mod.read(spec, job_id)
+        if current is None and notes_mod.unknown_references(spec, f"job:{job_id}", None):
+            raise RecordError(f"Job {job_id} is unknown on '{cluster}' (not in squeue or sacct).")
+        updated = records_mod.edited(current, job_id, project=project, note=note, confirm_note=confirm_note)
+        if updated is None:
+            return RecordEdit(job_id, current, changed=False)
+        if note:
+            _check_note(spec, note, updated.get("project"))
+        records_mod.update(spec, updated)
+    except (RuntimeError, ValueError) as exc:
+        raise RecordError(str(exc)) from exc
+    return RecordEdit(job_id, updated, changed=True)
 
 
 # --- helpers -----------------------------------------------------------------------

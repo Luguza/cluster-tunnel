@@ -12,7 +12,7 @@ from click.testing import CliRunner
 from cluster_tunnel import api, facts, jobs, notes, records
 from cluster_tunnel.cli import cli
 from cluster_tunnel.constants import ExitCode
-from tests.test_cli import _cfg, _patch_jobs
+from tests.test_cli import _cfg, _norm, _patch_jobs
 
 FACTS_OUTPUT = (
     "slurm_cluster=haic\n"
@@ -43,7 +43,7 @@ class FakeCluster:
                 return subprocess.CompletedProcess([], self.facts_rc, "", "squeue: not found")
             return subprocess.CompletedProcess([], 0, FACTS_OUTPUT, "")
         command, *rest = args
-        if command == "write":
+        if command in ("write", "update"):
             job_id, payload = rest
             self.written[job_id] = json.loads(base64.b64decode(payload))
             return subprocess.CompletedProcess([], 0, "", "")
@@ -235,3 +235,132 @@ def test_note_with_known_references_runs(tmp_path: Path, monkeypatch) -> None:
     assert r.exit_code == 0, r.output
     assert cluster.written["8"]["note"] == "rerun of job:7"
     assert cluster.note_checks == [["--", "job:7"]]
+
+
+# --- editing a record (ctun jobs edit) ---------------------------------------------
+
+
+def test_a_new_note_is_unconfirmed_and_logged() -> None:
+    current = {"job_id": "7", "note": "old", "note_confirmed": True, "code": {"commit": "abc"}, "future": 1}
+    record = records.edited(current, "7", project=None, note="new", confirm_note=False)
+    assert record["note"] == "new" and record["note_confirmed"] is False
+    assert record["code"] == {"commit": "abc"} and record["future"] == 1
+    (change,) = record["changes"]
+    assert change["note"] == ["old", "new"] and change["note_confirmed"] == [True, False]
+    assert change["at"] and change["from"]
+
+
+def test_a_missing_confirmation_counts_as_unconfirmed() -> None:
+    record = records.edited({"job_id": "7", "note": "old"}, "7", project=None, note="new", confirm_note=False)
+    (change,) = record["changes"]
+    assert "note_confirmed" not in change and record["note_confirmed"] is False
+
+
+def test_empty_values_clear_and_confirm_needs_a_note() -> None:
+    current = {"job_id": "7", "project": "htfm", "note": "x"}
+    record = records.edited(current, "7", project="", note="", confirm_note=False)
+    assert record["project"] is None and record["note"] is None
+    try:
+        records.edited(record, "7", project=None, note=None, confirm_note=True)
+    except ValueError as exc:
+        assert "no note to confirm" in str(exc)
+    else:
+        raise AssertionError("confirming a missing note must fail")
+
+
+def test_an_edit_that_changes_nothing_returns_none() -> None:
+    current = {"job_id": "7", "project": "htfm", "note": "x", "note_confirmed": True}
+    assert records.edited(current, "7", project="htfm", note="x", confirm_note=True) is None
+
+
+def _patch_job(monkeypatch, cluster: FakeCluster) -> None:
+    monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: object())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: True)
+    monkeypatch.setattr("cluster_tunnel.ssh.feed_script", cluster.feed_script)
+
+
+def test_jobs_edit_prints_the_resulting_record(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written["7"] = {"job_id": "7", "project": "htfm"}
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "--project", "other"])
+    assert r.exit_code == 0, r.stderr
+    assert json.loads(r.stdout) == [cluster.written["7"]] and cluster.written["7"]["project"] == "other"
+
+
+def test_api_edit_job_reports_whether_it_changed_the_record(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written["7"] = {"job_id": "7", "project": "htfm"}
+    _patch_job(monkeypatch, cluster)
+    edit = api.edit_job("localhost", "7", project="other")
+    assert edit.changed and edit.record["project"] == "other"
+    assert not api.edit_job("localhost", "7", project="other").changed
+
+
+def test_job_edit_gives_an_old_job_a_record_without_facts(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster(known_refs=("job:7",))
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "--project", "htfm/mh", "--note", "lr 3e-4", "--confirm-note"])
+    assert r.exit_code == 0, r.output
+    record = cluster.written["7"]
+    assert record["project"] == "htfm/mh" and record["note"] == "lr 3e-4" and record["note_confirmed"] is True
+    assert "submitted_at" not in record and len(record["changes"]) == 1
+
+
+def test_job_edit_refuses_an_unknown_job(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "--project", "htfm"])
+    assert r.exit_code != 0 and "unknown" in r.output
+    assert cluster.written == {}
+
+
+def test_job_edit_checks_the_note_references(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written["7"] = {"job_id": "7", "project": "htfm", "code": {"workdir": "/work/repo"}}
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "--note", "after job:5"])
+    assert r.exit_code == ExitCode.NOTE_REFERENCE_INVALID
+    assert "Not saved" in r.output and "note" not in cluster.written["7"]
+
+
+def test_jobs_edit_without_a_change_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7"])
+    assert r.exit_code == 2 and "--project, --note or --confirm-note" in _norm(r)
+
+
+def test_plain_jobs_and_jobs_list_print_the_same_overview(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_jobs(monkeypatch)
+    plain = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "--json"])
+    listed = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "list", "--json"])
+    assert plain.exit_code == listed.exit_code == 0
+    assert json.loads(plain.output) == json.loads(listed.output)
+
+
+def test_jobs_edit_gives_several_jobs_the_same_change(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written["7"] = {"job_id": "7", "project": "old"}
+    cluster.written["8"] = {"job_id": "8", "project": "new"}
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "8", "--project", "new"])
+    assert r.exit_code == 0, r.output
+    assert [record["project"] for record in json.loads(r.stdout)] == ["new", "new"]
+    assert "updated job 7" in r.stderr and "job 8 already has these values" in r.stderr
+
+
+def test_jobs_edit_stops_at_the_first_failing_job(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written["7"] = {"job_id": "7"}
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "999", "--project", "new"])
+    assert r.exit_code != 0 and "999 is unknown" in r.output
+    assert cluster.written["7"]["project"] == "new" and "999" not in cluster.written

@@ -1,10 +1,13 @@
-"""Job records: one write-once JSON file per submitted job, stored on the cluster.
+"""Job records: one JSON file per job, stored on the cluster.
 
 ``ctun run`` writes a record for each ``Submitted batch job <N>`` in its output.
 The record holds what the agent said about the job (``project``, ``note``) and
-the facts ctun collected itself (:mod:`cluster_tunnel.facts`). ``records.sh``
+the facts ctun collected itself (:mod:`cluster_tunnel.facts`). ``ctun jobs
+edit`` changes the project and the note later, and logs each change in the record; the
+facts are never changed. For a job that has no record (e.g. one submitted
+with plain ``sbatch``), ``ctun jobs edit`` creates one without facts. ``records.sh``
 keeps them in ``~/.ctun/jobs/<ClusterName>/<job id>.json`` on the cluster, so
-every machine that submits there sees the same records.
+every machine that works there sees the same records.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ SCHEMA_VERSION = 1
 
 @dataclass
 class JobRecord:
-    """One submitted job. Never changed after it is written."""
+    """One job. Facts are ``None`` (or empty) in a record ``ctun jobs edit`` created without them."""
 
     schema_version: int
     slurm_cluster: Optional[str]
@@ -36,11 +39,15 @@ class JobRecord:
     job_name: Optional[str]
     project: Optional[str]
     note: Optional[str]
-    submitted_at: str
-    submitted_from: str
+    #: True once a human confirmed the current note; a changed note is unconfirmed again.
+    note_confirmed: bool
+    submitted_at: Optional[str]
+    submitted_from: Optional[str]
     #: ``{workdir, commit, branch, pushed, uncommitted}``; each may be ``None`` (unknown).
     code: dict[str, Any]
     command: list[str]
+    #: One entry per edit: ``{at, from, <field>: [old, new], ...}``, oldest first.
+    changes: list[dict[str, Any]]
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -50,12 +57,18 @@ class JobRecord:
 
     @classmethod
     def from_json(cls, text: str) -> "JobRecord":
-        """Parse a record; keys this ctun does not know are ignored, missing ones are ``None``."""
-        raw = json.loads(text)
+        """Parse a record; see :meth:`from_dict`."""
+        return cls.from_dict(json.loads(text))
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "JobRecord":
+        """A record from its JSON object; keys this ctun does not know are ignored, missing ones are ``None``."""
         known = {f.name for f in fields(cls)}
         values = {name: raw.get(name) for name in known}
+        values["note_confirmed"] = bool(values["note_confirmed"])
         values["code"] = values["code"] or {}
         values["command"] = values["command"] or []
+        values["changes"] = values["changes"] or []
         values["job_id"] = str(raw["job_id"])
         return cls(**values)
 
@@ -76,7 +89,8 @@ def build(
         job_name=facts.job_name,
         project=project,
         note=note,
-        submitted_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        note_confirmed=False,
+        submitted_at=_now(),
         submitted_from=socket.gethostname(),
         code={
             "workdir": facts.workdir,
@@ -86,7 +100,49 @@ def build(
             "uncommitted": facts.uncommitted,
         },
         command=command,
+        changes=[],
     )
+
+
+def edited(
+    current: Optional[dict[str, Any]],
+    job_id: str,
+    *,
+    project: Optional[str],
+    note: Optional[str],
+    confirm_note: bool,
+) -> Optional[dict[str, Any]]:
+    """The raw record ``current`` (``None``: the job has none yet) after one edit.
+
+    ``project`` or ``note`` of ``None`` keeps the value, ``""`` clears it. A new
+    note is unconfirmed unless ``confirm_note``. The edit is logged in
+    ``changes``; keys this ctun does not know are kept. Returns ``None`` when the
+    edit changes nothing. Raises :class:`ValueError` when ``confirm_note`` finds
+    no note to confirm.
+    """
+    record = dict(current) if current else {"schema_version": SCHEMA_VERSION, "job_id": job_id}
+    record.setdefault("note_confirmed", False)  # records before ``ctun jobs edit`` lack it
+    wanted: dict[str, Any] = {}
+    if project is not None:
+        wanted["project"] = project or None
+    if note is not None and (note or None) != record.get("note"):
+        wanted["note"] = note or None
+        wanted["note_confirmed"] = False
+    if confirm_note:
+        if not wanted.get("note", record.get("note")):
+            raise ValueError(f"job {job_id} has no note to confirm")
+        wanted["note_confirmed"] = True
+
+    change = {key: [record.get(key), value] for key, value in wanted.items() if record.get(key) != value}
+    if not change:
+        return None
+    record.update(wanted)
+    record["changes"] = [*record.get("changes", []), {"at": _now(), "from": socket.gethostname(), **change}]
+    return record
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def write(spec: ConnSpec, record: JobRecord) -> None:
@@ -96,6 +152,22 @@ def write(spec: ConnSpec, record: JobRecord) -> None:
     if res.returncode != 0:
         detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
         raise RuntimeError(f"could not write the record of job {record.job_id}: {detail}")
+
+
+def update(spec: ConnSpec, record: dict[str, Any]) -> None:
+    """Store the raw ``record`` on the cluster in place of the job's current one, or as its first."""
+    document = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+    payload = base64.b64encode(document.encode("utf-8")).decode("ascii")
+    res = ssh.feed_script(spec, SCRIPT_PATH, ["update", record["job_id"], payload])
+    if res.returncode != 0:
+        detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
+        raise RuntimeError(f"could not store the record of job {record['job_id']}: {detail}")
+
+
+def read(spec: ConnSpec, job_id: str) -> Optional[dict[str, Any]]:
+    """The raw record of ``job_id`` as stored, or ``None`` if the job has none."""
+    found = [raw for raw in _read_raw(spec, ["list", 0, job_id]) if str(raw.get("job_id")) == job_id]
+    return found[0] if found else None
 
 
 def list_recent(spec: ConnSpec, since_minutes: int, job_ids: list[str]) -> list[JobRecord]:
@@ -109,16 +181,28 @@ def list_all(spec: ConnSpec) -> list[JobRecord]:
 
 
 def _read(spec: ConnSpec, args: list[object]) -> list[JobRecord]:
+    records = []
+    for raw in _read_raw(spec, args):
+        try:
+            records.append(JobRecord.from_dict(raw))
+        except (TypeError, KeyError):
+            continue  # a damaged file must not hide the others
+    return records
+
+
+def _read_raw(spec: ConnSpec, args: list[object]) -> list[dict[str, Any]]:
     res = ssh.feed_script(spec, SCRIPT_PATH, args)
     if res.returncode != 0:
         detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
         raise RuntimeError(f"could not read the job records: {detail}")
-    records = []
+    documents = []
     for line in res.stdout.splitlines():
         if not line.strip():
             continue
         try:
-            records.append(JobRecord.from_json(line))
-        except (ValueError, TypeError, KeyError):
+            document = json.loads(line)
+        except ValueError:
             continue  # a damaged file must not hide the others
-    return records
+        if isinstance(document, dict):
+            documents.append(document)
+    return documents
