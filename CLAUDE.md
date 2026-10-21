@@ -100,6 +100,11 @@ the Rich-formatted help. One file per command domain:
 - `tests/` — the pytest suite.
 - `.github/workflows/ci.yml` — CI: the test suite on Ubuntu and Windows.
 
+The VS Code extension that renders ctun's JSON (jobs, job records, notes) lives
+in its own repo, <https://github.com/aimat-lab/cluster-tunnel-vscode>; it talks to ctun only
+through the CLI, so keep `status -j`, `jobs --json`, `projects list --json` and
+`info --json` stable. Its plan is in `docs/plans/job-records-and-vscode-extension.md`.
+
 ## Development
 
 ```bash
