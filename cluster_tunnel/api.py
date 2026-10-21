@@ -35,9 +35,11 @@ import yaml
 from cluster_tunnel import budget as budget_mod
 from cluster_tunnel import cmdlog, configedit
 from cluster_tunnel import config as config_mod
+from cluster_tunnel import facts as facts_mod
 from cluster_tunnel import hostkey as hostkey_mod
 from cluster_tunnel import jobs as jobs_mod
 from cluster_tunnel import popup, session, ssh, wsl
+from cluster_tunnel import records as records_mod
 from cluster_tunnel import transfer as transfer_mod
 from cluster_tunnel.budget import Decision
 from cluster_tunnel.config import Cluster, Config
@@ -57,6 +59,7 @@ from cluster_tunnel.errors import (
 from cluster_tunnel.hostkey import HostKey
 from cluster_tunnel.jobs import Job
 from cluster_tunnel.popup import Credentials
+from cluster_tunnel.records import JobRecord
 from cluster_tunnel.ssh import ConnSpec
 
 __all__ = [
@@ -66,7 +69,7 @@ __all__ = [
     "host_key", "pin_host_key",
     # results and inputs
     "Credentials", "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
-    "Decision", "Job", "HostKey", "ConnSpec", "Config", "Cluster",
+    "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
     # errors
     "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
     "LoginError", "BudgetBlocked", "BudgetExhausted", "BudgetGuardError", "TransportError",
@@ -95,6 +98,10 @@ class Result:
     stderr: Optional[str] = None
     #: The IDs of every ``Submitted batch job <N>`` line a :func:`run` printed; empty with ``tty``.
     job_ids: list[str] = field(default_factory=list)
+    #: The job records :func:`run` stored on the cluster, one per submitted job.
+    records: list[JobRecord] = field(default_factory=list)
+    #: What went wrong around the command without failing it, e.g. a fact or record that could not be stored.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -130,16 +137,33 @@ class ClusterJobs:
     jobs: list[Job] = field(default_factory=list)
     #: Slurm's ``ClusterName``, which jobs see as ``SLURM_CLUSTER_NAME``; ``None`` if unknown.
     slurm_cluster: Optional[str] = None
+    #: The job records of the listed jobs and of the window, by job ID; ``None`` when not read.
+    records: Optional[dict[str, JobRecord]] = None
+    #: Why the records could not be read; the jobs are listed all the same.
+    records_error: Optional[str] = None
 
     def as_dict(self) -> dict:
-        """The entry as ``ctun jobs --json`` prints it."""
-        return {
+        """The entry as ``ctun jobs --json`` prints it.
+
+        With records read, each job carries its ``record`` (or ``None``), and
+        ``records_without_job`` lists the records whose job is not listed.
+        """
+        entry = {
             "cluster": self.cluster,
             "slurm_cluster": self.slurm_cluster,
             "live": self.live,
             "error": self.error,
             "jobs": [job.as_dict() for job in self.jobs],
         }
+        if self.records is None and self.records_error is None:
+            return entry
+        unlisted = dict(self.records or {})
+        for job in entry["jobs"]:
+            record = unlisted.pop(job["jobid"], None)
+            job["record"] = record.as_dict() if record else None
+        entry["records_without_job"] = [record.as_dict() for record in unlisted.values()]
+        entry["records_error"] = self.records_error
+        return entry
 
 
 @dataclass
@@ -564,6 +588,8 @@ def run(
     tty: bool = False,
     timeout: Optional[float] = None,
     on_preflight: Optional[Callable[[Decision], None]] = None,
+    project: Optional[str] = None,
+    note: Optional[str] = None,
     config: Optional[Config] = None,
     config_path: Optional[PathLike] = None,
 ) -> Result:
@@ -580,6 +606,11 @@ def run(
     124; the remote command may keep running on the cluster. The IDs of the
     jobs the command submitted go into the :class:`Result` and the command log;
     with ``tty`` ctun doesn't see the output, so there are none.
+
+    For each submitted job, unless the cluster has ``job_records: false``, a
+    record is stored on the cluster: ``project``, ``note``, and the facts ctun
+    collects there itself (job name, working directory, the git state in it). A
+    fact or record that can't be had only adds to ``Result.warnings``.
     """
     if capture and tty:
         raise ValueError("a TTY needs streamed output; pass capture=False")
@@ -594,7 +625,10 @@ def run(
     # Log the command (not its output) so `status` can show activity.
     entry_id = cmdlog.record(cluster, tokens)
     if tty:
-        return Result(ssh.run(spec, tokens, tty=True))
+        result = Result(ssh.run(spec, tokens, tty=True))
+        if project or note:
+            result.warnings.append("no job record written (a TTY hides the output)")
+        return result
     if capture:
         res = ssh.capture(spec, tokens, timeout=timeout)
         result = Result(res.returncode, res.stdout, res.stderr)
@@ -605,6 +639,10 @@ def run(
     result.job_ids = jobs_mod.submitted_job_ids(output)
     if result.job_ids:
         cmdlog.record_jobs(cluster, entry_id, result.job_ids)
+    if config.clusters[cluster].job_records:
+        _write_records(spec, result, project=project, note=note, command=tokens)
+    elif project or note:
+        result.warnings.append("no job record written (job_records is off for this cluster)")
     return result
 
 
@@ -681,6 +719,7 @@ def jobs(
     cluster: Optional[str] = None,
     *,
     since_minutes: int = DEFAULT_SINCE_MINUTES,
+    with_records: bool = False,
     config: Optional[Config] = None,
     config_path: Optional[PathLike] = None,
 ) -> list[ClusterJobs]:
@@ -690,6 +729,10 @@ def jobs(
     running and pending jobs and those that finished within ``since_minutes``
     (``0``: active jobs only). A cluster whose tunnel is down is reported, never
     logged in to; a probe that fails is reported in ``error``.
+
+    ``with_records`` also reads the job records (one more call per cluster, on
+    clusters that keep them): those of the listed jobs and those written within
+    the window, in ``records``; a failure to read them goes in ``records_error``.
     """
     config, _ = _load(config, config_path)
     results: list[ClusterJobs] = []
@@ -704,6 +747,12 @@ def jobs(
                 item.jobs = overview.jobs
             except Exception as exc:  # noqa: BLE001 — surface, don't abort the sweep
                 item.error = str(exc)
+        if with_records and item.live and item.error is None and entry.job_records:
+            try:
+                found = records_mod.list_recent(spec, since_minutes, [job.jobid for job in item.jobs])
+                item.records = {record.job_id: record for record in found}
+            except RuntimeError as exc:
+                item.records_error = str(exc)
         results.append(item)
     return results
 
@@ -755,6 +804,22 @@ def _host_keys(cluster: str, action: str, call: Callable):
         return call()
     except RuntimeError as exc:
         raise HostKeyError(f"cannot {action} the host key of '{cluster}': {exc}") from exc
+
+
+def _write_records(
+    spec: ConnSpec, result: Result, *, project: Optional[str], note: Optional[str], command: list[str]
+) -> None:
+    """Store a record for each job in ``result.job_ids``; a failure goes in ``result.warnings``, never raises."""
+    for job_id in result.job_ids:
+        facts = facts_mod.collect(spec, job_id)
+        result.warnings.extend(facts.warnings)
+        record = records_mod.build(job_id, facts, project=project, note=note, command=command)
+        try:
+            records_mod.write(spec, record)
+        except RuntimeError as exc:
+            result.warnings.append(str(exc))
+            continue
+        result.records.append(record)
 
 
 def _preflight(config: Config, path: Path, name: str, spec: ConnSpec, tokens: list[str]) -> Decision:

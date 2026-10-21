@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -64,6 +65,7 @@ def _patch_run(monkeypatch, output: str) -> None:
     monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: True)
     monkeypatch.setattr("cluster_tunnel.ssh.run_capturing", lambda spec, tokens: (0, output))
     monkeypatch.setattr("cluster_tunnel.ssh.run", lambda spec, tokens, tty=False: 0)
+    monkeypatch.setattr("cluster_tunnel.ssh.feed_script", lambda *a, **k: subprocess.CompletedProcess([], 0, "", ""))
 
 
 def test_run_logs_the_job_ids_it_submitted(tmp_path: Path, monkeypatch) -> None:

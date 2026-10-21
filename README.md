@@ -565,9 +565,9 @@ except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
 | Function | Does what |
 |---|---|
 | `login`, `logout`, `status`, `is_live` | `ctun login`, `logout`, `status`; the tunnel state. `login(credentials=api.Credentials(password, otp))` takes a password and OTP from the program's own prompt instead of the terminal or the dialog |
-| `run`, `preflight` | `ctun run` (streamed, or `capture=True` with an optional `timeout`) and `run -n` |
+| `run`, `preflight` | `ctun run` (streamed, or `capture=True` with an optional `timeout`) and `run -n`; `project=`/`note=` go into the job records, and the `Result` lists the submitted `job_ids` and the `records` written |
 | `upload`, `download` | `ctun upload`, `download` (optionally `capture=True`) |
-| `jobs` | `ctun jobs` |
+| `jobs` | `ctun jobs`; `with_records=True` also reads each job's record |
 | `host_key`, `pin_host_key` | `ctun hostkey`, `hostkey --pin`; pins only the fingerprint passed in, and replaces a trusted key only with `replace=True` |
 | `budget` | The guard's verdict for any submission right now, probed over the tunnel |
 | `feed_script` | Runs a local bash script on the login node; not guarded, for read-only probes |

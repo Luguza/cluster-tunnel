@@ -77,9 +77,19 @@ class ExecutionCommandsMixin:
     @click.pass_obj
     @click.option("--tty", is_flag=True, help="Allocate a pseudo-TTY (for interactive remote programs).")
     @click.option("-n", "--dry-run", is_flag=True, help="Run the budget pre-flight check only; don't execute.")
+    @click.option("--project", default=None, help="Project name stored in the record of each job this command submits.")
+    @click.option("--note", default=None, help="Note stored in the record of each job this command submits.")
     @click.argument("command", nargs=-1, type=click.UNPROCESSED)
-    def run_command(self, tty: bool, dry_run: bool, command: tuple[str, ...]) -> None:
-        """Run a command on the cluster: ctun -t <cluster> run -- <cmd...>."""
+    def run_command(
+        self, tty: bool, dry_run: bool, project: str | None, note: str | None, command: tuple[str, ...]
+    ) -> None:
+        """Run a command on the cluster: ctun -t <cluster> run -- <cmd...>.
+
+        For each `Submitted batch job <N>` in the output, ctun stores a job record
+        on the cluster: `--project`, `--note`, and the facts it collects itself
+        (commit, uncommitted files, working directory, ...). The command's output
+        and exit code stay as they are.
+        """
         from cluster_tunnel import api
 
         if not command:
@@ -94,7 +104,9 @@ class ExecutionCommandsMixin:
             if dry_run:
                 _echo_dry_run(name, tokens, api.preflight(name, tokens, **where))
                 return
-            result = api.run(name, tokens, tty=tty, on_preflight=_show_budget, **where)
+            result = api.run(
+                name, tokens, tty=tty, on_preflight=_show_budget, project=project, note=note, **where
+            )
         except api.LoginRequired as exc:
             fail(str(exc), exc.exit_code)
         except api.BudgetBlocked as exc:
@@ -104,4 +116,8 @@ class ExecutionCommandsMixin:
                 emit_marker(exc.exit_code)
                 raise SystemExit(int(exc.exit_code)) from None
             fail(_blocked_message(name, tokens, exc), exc.exit_code)
+        for warning in result.warnings:
+            click.secho(f"ctun: {warning}", fg="yellow", err=True)
+        for record in result.records:
+            click.secho(f"ctun: recorded job {record.job_id}", fg="bright_black", err=True)
         raise SystemExit(result.exit_code)

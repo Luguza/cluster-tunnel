@@ -50,10 +50,15 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
 - `budget.py` — session-scoped compute-budget guard (runs the cluster's budget
   script over the tunnel and compares usage against the session limit).
 - `budget_templates/` — bundled per-cluster budget scripts (`haicore.sh`, ...).
+- `records.py` — job records: the write-once JSON per submitted job, stored on
+  the cluster in `~/.ctun/jobs/<ClusterName>/` (`scripts/records.sh`).
+- `facts.py` — facts about a just-submitted job, collected on the cluster
+  (`scripts/facts.sh`): job name, working directory, git state there.
 - `jobs.py` — job overview: parse the `scripts/jobs.sh` probe output into `Job`s
   (used by the `jobs` command).
 - `scripts/` — bundled universal probes shipped over the tunnel via `bash -s`
-  (`jobs.sh` — squeue/sacct job overview).
+  (`jobs.sh` — squeue/sacct job overview; `records.sh`, `facts.sh` — job
+  records).
 - `transfer.py` — file transfer (rsync) over the live tunnel.
 - `cmdlog.py` — per-cluster log of commands sent (never their output).
 - `paths.py` — XDG config/cache locations.
