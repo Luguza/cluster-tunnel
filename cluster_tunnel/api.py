@@ -69,11 +69,11 @@ from cluster_tunnel.ssh import ConnSpec
 __all__ = [
     # operations
     "load_config", "clusters", "connection", "is_live", "status", "login", "logout",
-    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs", "edit_job",
+    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs", "edit_job", "projects",
     "host_key", "pin_host_key",
     # results and inputs
     "Credentials", "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
-    "RecordEdit", "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
+    "ClusterProjects", "RecordEdit", "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
     # errors
     "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
     "LoginError", "BudgetBlocked", "BudgetExhausted", "BudgetGuardError", "TransportError",
@@ -194,6 +194,22 @@ class LogoutResult:
 
     cluster: str
     was_live: bool
+
+
+@dataclass
+class ClusterProjects:
+    """One cluster's projects, as ``ctun projects list`` reports them."""
+
+    cluster: str
+    live: bool
+    job_records: bool  # false: the cluster keeps no records, so it was skipped
+    error: Optional[str] = None
+    #: ``{"project", "jobs"}`` per project, by name; jobs without a project are not counted.
+    projects: list[dict] = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        """The entry as ``ctun projects list --json`` prints it."""
+        return asdict(self)
 
 
 @dataclass
@@ -845,7 +861,44 @@ def edit_job(
     return RecordEdit(job_id, updated, changed=True)
 
 
+# --- projects ----------------------------------------------------------------------
+
+
+def projects(
+    cluster: Optional[str] = None,
+    *,
+    config: Optional[Config] = None,
+    config_path: Optional[PathLike] = None,
+) -> list[ClusterProjects]:
+    """Every project in the job records of ``cluster``, or of every configured cluster, as ``ctun projects list``.
+
+    A project exists only through the jobs whose record names it, so this
+    reads every record, however old, and counts the jobs per project. A
+    cluster whose tunnel is down is reported, never logged in to; one that
+    keeps no records is skipped; a failure to read the records goes in ``error``.
+    """
+    config, _ = _load(config, config_path)
+    results: list[ClusterProjects] = []
+    for spec, item in _record_clusters(config, cluster, ClusterProjects):
+        if spec is not None:
+            try:
+                item.projects = records_mod.projects(records_mod.list_all(spec))
+            except RuntimeError as exc:
+                item.error = str(exc)
+        results.append(item)
+    return results
+
+
 # --- helpers -----------------------------------------------------------------------
+
+
+def _record_clusters(config: Config, cluster: Optional[str], result_type: type):
+    """``(spec, result)`` per cluster asked for; ``spec`` is ``None`` unless the cluster is live and keeps records."""
+    for name in _names(config, cluster):
+        spec = ssh.conn_spec(config, name)
+        keeps_records = config.clusters[name].job_records
+        item = result_type(name, ssh.is_live(spec), keeps_records)
+        yield (spec if item.live and keeps_records else None), item
 
 
 def _path_arg(config_path: Optional[PathLike]) -> Optional[str]:

@@ -505,3 +505,46 @@ def test_update_many_splits_the_records_into_batches_that_fit_a_command_line(mon
     many = [{"job_id": str(job_id), "note": "x" * 1000} for job_id in range(100)]
     records.update_many(object(), many)
     assert len(cluster.written) == 100 and cluster.update_calls > 1
+
+
+# --- listing projects (ctun projects list) ---------------------------------------
+
+
+def test_projects_list_counts_the_jobs_of_every_record(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "7": {"job_id": "7", "project": "htfm/mh"},
+        "8": {"job_id": "8", "project": "htfm/mh"},
+        "9": {"job_id": "9", "project": "eval"},
+        "10": {"job_id": "10", "project": None},
+    }
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "list", "--json"])
+    assert r.exit_code == 0, r.output
+    (entry,) = json.loads(r.stdout)["clusters"]
+    assert entry == {
+        "cluster": "localhost",
+        "live": True,
+        "job_records": True,
+        "error": None,
+        "projects": [{"project": "eval", "jobs": 1}, {"project": "htfm/mh", "jobs": 2}],
+    }
+    assert [item.as_dict() for item in api.projects("localhost")] == [entry]
+
+
+def test_projects_list_skips_a_down_tunnel(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_job(monkeypatch, FakeCluster())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: False)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "list"])
+    assert r.exit_code == 0 and "tunnel down" in r.output
+
+
+def test_projects_list_marks_a_cluster_without_records(tmp_path: Path, monkeypatch) -> None:
+    config = _cfg(tmp_path, monkeypatch)
+    config.write_text("clusters:\n  localhost:\n    host: localhost\n    job_records: false\n", encoding="utf-8")
+    _patch_job(monkeypatch, FakeCluster())
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "list", "--json"])
+    (entry,) = json.loads(r.stdout)["clusters"]
+    assert entry["job_records"] is False and entry["error"] is None and entry["projects"] == []

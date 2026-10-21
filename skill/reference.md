@@ -10,6 +10,7 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 - `status` — tunnel + session state
 - `jobs` — Slurm job overview
 - `jobs edit` — change jobs' project or note
+- `projects list` — every project in the job records
 - `info` — cluster briefing
 - `note` — record a fact about a cluster (after the user approves)
 - `login` — authenticate and open the tunnel
@@ -113,6 +114,24 @@ the facts from submit time are never changed. A job that has no record yet
 job that Slurm doesn't know.
 
 **Only change a job after the user's explicit yes** to the exact command.
+
+## `projects list` — every project in the job records
+
+```
+ctun projects list                    # all clusters with a live tunnel
+ctun -t <cluster> projects list -j    # one cluster, machine-readable JSON
+```
+
+A project exists only through the jobs whose [record](#job-records) names it, so
+this reads every record on the cluster, however old, and counts the jobs per
+project. Use it to reuse an existing project name instead of inventing a new
+one. Jobs without a project are not counted. Read-only; down tunnels are
+reported, never logged in to.
+
+`--json` prints `{"clusters": [{cluster, live, job_records, error, projects}]}`,
+where `projects` is `[{project, jobs}]` sorted by name. `job_records` is false
+for a cluster configured without records, which is skipped. `error` is set when
+the records could not be read.
 
 ## `info` — cluster briefing
 
