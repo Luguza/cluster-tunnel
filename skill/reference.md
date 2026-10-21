@@ -201,11 +201,15 @@ with `--tty` (the output is not read) and for a cluster with
 `job_records: false` in the config.
 
 **Notes are drafts for the human.** Put only facts from this session into
-`--note` (what changed and why), never guesses about results. When unsure,
-leave the note out.
+`--note` (what changed and why), never guesses about results. Refer to a commit
+as `commit:<hash>` and to a job as `job:<id>`; ctun checks each reference before
+it runs the command, and refuses the run with exit code 13
+(`ctun-error: note_reference_invalid`) if one cannot be found. Commit references
+are looked up in the repos of the project's earlier records, so leave them out
+of a project's first note. When unsure, leave the note out.
 
 ```
-ctun -t haicore run --project htfm --note "lr 1e-3, rerun after the OOM" -- bash -c 'cd $REPO && ./submit.sh'
+ctun -t haicore run --project htfm --note "lr 1e-3 after commit:541b4cb, rerun of job:1695485" -- bash -c 'cd $REPO && ./submit.sh'
 ```
 
 ## `upload` / `download` — transfer files over the tunnel

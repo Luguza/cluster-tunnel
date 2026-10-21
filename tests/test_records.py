@@ -9,8 +9,9 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from cluster_tunnel import api, facts, jobs, records
+from cluster_tunnel import api, facts, jobs, notes, records
 from cluster_tunnel.cli import cli
+from cluster_tunnel.constants import ExitCode
 from tests.test_cli import _cfg, _patch_jobs
 
 FACTS_OUTPUT = (
@@ -27,11 +28,16 @@ FACTS_OUTPUT = (
 class FakeCluster:
     """Answers `feed_script` for facts.sh and records.sh like a cluster would."""
 
-    def __init__(self, facts_rc: int = 0) -> None:
+    def __init__(self, facts_rc: int = 0, known_refs: tuple[str, ...] = ()) -> None:
         self.facts_rc = facts_rc
+        self.known_refs = known_refs
         self.written: dict[str, dict] = {}
+        self.note_checks: list[list] = []
 
     def feed_script(self, spec, script_path: Path, args: list, timeout=None) -> subprocess.CompletedProcess:
+        if script_path == notes.SCRIPT_PATH:
+            self.note_checks.append(args)
+            return subprocess.CompletedProcess([], 0, "\n".join(self.known_refs), "")
         if script_path == facts.SCRIPT_PATH:
             if self.facts_rc:
                 return subprocess.CompletedProcess([], self.facts_rc, "", "squeue: not found")
@@ -186,3 +192,46 @@ def test_api_jobs_reads_no_records_unless_asked(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr("cluster_tunnel.records.list_recent", lambda *a: (_ for _ in ()).throw(AssertionError))
     [entry] = api.jobs("localhost")
     assert entry.records is None and "records_without_job" not in entry.as_dict()
+
+
+# --- note references --------------------------------------------------------------
+
+
+def test_references_finds_markers_once() -> None:
+    note = "rerun of job:1695485 after commit:541b4cb; see job:1695485 and commit:zz"
+    assert notes.references(note) == ["job:1695485", "commit:541b4cb"]
+
+
+def test_note_with_unknown_reference_is_refused_before_running(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster(known_refs=("job:7",))
+    cluster.written["1"] = {"job_id": "1", "project": "htfm", "code": {"workdir": "/work/repo"}}
+    cluster.written["2"] = {"job_id": "2", "project": "other", "code": {"workdir": "/work/other"}}
+    _patch_run(monkeypatch, cluster, "Submitted batch job 8\n")
+    note = "after job:7 and commit:abcdef1"
+    r = CliRunner().invoke(cli, ["-t", "localhost", "run", "--project", "htfm", "--note", note, "--", "sbatch", "x"])
+    assert r.exit_code == ExitCode.NOTE_REFERENCE_INVALID
+    assert "commit:abcdef1" in r.output and "note_reference_invalid" in r.output
+    assert "8" not in cluster.written  # nothing ran, so nothing was recorded
+    assert cluster.note_checks == [["/work/repo", "--", "job:7", "commit:abcdef1"]]
+
+
+def test_api_run_raises_on_an_unknown_reference(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_run(monkeypatch, FakeCluster(), "Submitted batch job 8\n")
+    try:
+        api.run("localhost", ["sbatch", "x"], note="after job:7")
+    except api.NoteReferenceInvalid as exc:
+        assert exc.unknown == ["job:7"] and exc.exit_code == ExitCode.NOTE_REFERENCE_INVALID
+    else:
+        raise AssertionError("an unknown reference must stop the run")
+
+
+def test_note_with_known_references_runs(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster(known_refs=("job:7",))
+    _patch_run(monkeypatch, cluster, "Submitted batch job 8\n")
+    r = CliRunner().invoke(cli, ["-t", "localhost", "run", "--note", "rerun of job:7", "--", "sbatch", "x"])
+    assert r.exit_code == 0, r.output
+    assert cluster.written["8"]["note"] == "rerun of job:7"
+    assert cluster.note_checks == [["--", "job:7"]]
