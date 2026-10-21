@@ -70,6 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OTP and session limit as JSON on stdin and logs in with them, as
   `api.login(credentials=...)` does: for front ends such as the VS Code extension,
   whose own input boxes ask the human.
+- **`login -i` in a VS Code window.** `ctun login -i` hands the login to the VS
+  Code window that started it, when the ctun extension names its local pipe in
+  `CTUN_VSCODE_LOGIN`. The window asks for the secrets and logs in itself with
+  `--credentials-stdin`; only the outcome comes back. Without the variable, or if
+  the window declines or is gone, the popup opens as before.
 
 ### Changed
 
