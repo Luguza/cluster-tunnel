@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   jobs can join projects too. Records gain `note_confirmed` and `changes`.
   `ctun jobs list` names the overview next to `jobs edit`; plain `ctun jobs` works
   as before.
+- **Projects of all time.** `ctun projects list` (`api.projects()`) lists every
+  project in the job records of each live cluster, however old, with its number
+  of jobs; `--json` for front ends such as the VS Code extension's Projects view.
+  A cluster configured without records is marked `"job_records": false`.
 
 ## [0.8.0] - 2026-10-20
 

@@ -77,6 +77,15 @@ class JobRecord:
         return cls(**values)
 
 
+def projects(records: list[JobRecord]) -> list[dict[str, Any]]:
+    """Each project the ``records`` name, by name, with its number of jobs; records without one are left out."""
+    counts: dict[str, int] = {}
+    for record in records:
+        if record.project:
+            counts[record.project] = counts.get(record.project, 0) + 1
+    return [{"project": project, "jobs": counts[project]} for project in sorted(counts)]
+
+
 def build(
     job_id: str,
     facts: JobFacts,
