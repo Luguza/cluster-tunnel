@@ -77,7 +77,7 @@ the Rich-formatted help. One file per command domain:
 - `jobs.py` — the `jobs` group: the Slurm job overview (`jobs`, `jobs list`) and
   `jobs edit` (change a job's record); grouped under Tunnel
 - `projects.py` — the `projects` group: `projects list` (the projects in the job
-  records); grouped under Tunnel
+  records) and `projects rename`; grouped under Tunnel
 - `hostkey.py` — `hostkey` (show / pin the server's host key; grouped under Tunnel)
 - `execution.py` — `run` (budget-guarded command execution)
 - `transfer.py` — `upload`, `download`

@@ -11,6 +11,7 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 - `jobs` — Slurm job overview
 - `jobs edit` — change jobs' project or note
 - `projects list` — every project in the job records
+- `projects rename` — rename a project in every job record
 - `info` — cluster briefing
 - `note` — record a fact about a cluster (after the user approves)
 - `login` — authenticate and open the tunnel
@@ -130,6 +131,26 @@ reported, never logged in to.
 where `projects` is `[{project, jobs}]` sorted by name. `job_records` is false
 for a cluster configured without records, which is skipped. `error` is set when
 the records could not be read.
+
+## `projects rename` — rename a project in every job record
+
+```
+ctun projects rename htfm archive/htfm             # every cluster with a live tunnel
+ctun -t <cluster> projects rename htfm eval -j     # one cluster, JSON
+```
+
+Gives every job of project OLD the project NEW, and the projects nested in OLD
+along with it: `htfm/mh` becomes `archive/htfm/mh`. If NEW already exists, the
+jobs join it. Each change is logged in the record's `changes`, as with
+`jobs edit`. A down cluster keeps OLD; log in and run the command again, which
+is safe to repeat.
+
+`--json` prints `{"clusters": [{cluster, live, job_records, error, renamed}]}`,
+where `renamed` lists the job IDs whose record changed; `job_records` and
+`error` are as in `projects list`. The records go back to the cluster a few
+dozen per SSH call.
+
+**Only rename a project after the user's explicit yes** to the exact command.
 
 ## `info` — cluster briefing
 

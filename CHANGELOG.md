@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project in the job records of each live cluster, however old, with its number
   of jobs; `--json` for front ends such as the VS Code extension's Projects view.
   A cluster configured without records is marked `"job_records": false`.
+- **Renaming a project.** `ctun projects rename OLD NEW` (`api.rename_project()`)
+  renames a project in every job record of each live cluster, with the projects
+  nested in it (`htfm/mh` → `archive/htfm/mh`). Each change is logged in the
+  record like `jobs edit`, and the records go back a few dozen per SSH call
+  (`records.sh update` takes several records).
 
 ## [0.8.0] - 2026-10-20
 
