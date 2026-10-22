@@ -123,7 +123,16 @@ def project_name(name: str) -> str:
 
 
 def renamed_project(project: Optional[str], old: str, new: str) -> Optional[str]:
-    """``project`` once ``old`` is renamed to ``new``, with the projects nested in ``old``; ``None`` if it is neither."""
+    """``project`` once ``old`` is renamed to ``new``, with the projects nested in ``old``; ``None`` if it is neither.
+
+    When ``new`` lies inside ``old`` (``htfm`` to ``htfm/old``), ``new`` and the
+    projects in it are left alone: an earlier run renamed them already, and the
+    rename must be safe to run again.
+    """
+    if not isinstance(project, str):
+        return None
+    if new.startswith(f"{old}/") and (project == new or project.startswith(f"{new}/")):
+        return None
     if project == old:
         return new
     if project and project.startswith(f"{old}/"):

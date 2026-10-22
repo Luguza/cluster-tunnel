@@ -582,6 +582,22 @@ def test_projects_rename_refuses_an_empty_name(tmp_path: Path, monkeypatch) -> N
     assert r.exit_code == 2 and "the project to rename is empty" in _norm(r)
 
 
+def test_a_rename_into_a_project_inside_old_is_safe_to_run_again(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "7": {"job_id": "7", "project": "htfm"},
+        "8": {"job_id": "8", "project": "htfm/mh"},
+        "9": {"job_id": "9", "project": "htfm/oldish"},
+    }
+    _patch_job(monkeypatch, cluster)
+    renamed = {"7": "htfm/old", "8": "htfm/old/mh", "9": "htfm/old/oldish"}
+    assert api.rename_project("htfm", "htfm/old", "localhost")[0].renamed == ["7", "8", "9"]
+    assert {job_id: record["project"] for job_id, record in cluster.written.items()} == renamed
+    assert api.rename_project("htfm", "htfm/old", "localhost")[0].renamed == []
+    assert {job_id: record["project"] for job_id, record in cluster.written.items()} == renamed
+
+
 def test_project_names_lose_stray_slashes_and_blanks() -> None:
     assert records.project_name(" archive//htfm/ ") == "archive/htfm"
     assert records.project_name("a / b") == "a/b"

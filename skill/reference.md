@@ -146,7 +146,8 @@ along with it: `htfm/mh` becomes `archive/htfm/mh`. If NEW already exists, the
 jobs join it. Both names lose a `/` or blanks at either end (`archive/` is
 `archive`), as every project name does when it is stored. Each change is logged in the record's `changes`, as with
 `jobs edit`. A down cluster keeps OLD; log in and run the command again, which
-is safe to repeat.
+is safe to repeat, also when NEW lies inside OLD (`htfm` to `htfm/old`): the
+projects already in NEW stay where they are.
 
 `--json` prints `{"clusters": [{cluster, live, job_records, error, renamed}]}`,
 where `renamed` lists the job IDs whose record changed; `job_records` and
