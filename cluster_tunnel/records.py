@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from cluster_tunnel import ssh
+from cluster_tunnel import constants, ssh
 from cluster_tunnel.ssh import ConnSpec
 
 if TYPE_CHECKING:
@@ -160,8 +160,12 @@ def _now() -> str:
 
 
 def call(spec: ConnSpec, args: list[object]) -> subprocess.CompletedProcess:
-    """Run ``records.sh`` with ``args`` (a command and its arguments) on the cluster."""
-    return ssh.feed_script(spec, SCRIPT_PATH, args)
+    """Run ``records.sh`` with ``args`` (a command and its arguments) on the cluster.
+
+    Bounded like every probe: a hung ``scontrol``, ``sacct`` or file system fails
+    the call (exit code 124) instead of hanging ``run`` or ``jobs``.
+    """
+    return ssh.feed_script(spec, SCRIPT_PATH, args, timeout=constants.PROBE_TIMEOUT)
 
 
 def write(spec: ConnSpec, record: JobRecord) -> None:

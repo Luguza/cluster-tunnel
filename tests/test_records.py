@@ -11,7 +11,7 @@ from click.testing import CliRunner
 
 from cluster_tunnel import api, jobs, notes, records
 from cluster_tunnel.cli import cli
-from cluster_tunnel.constants import ExitCode
+from cluster_tunnel.constants import PROBE_TIMEOUT, ExitCode
 from tests.test_cli import _cfg, _norm, _patch_jobs
 
 FACTS_OUTPUT = (
@@ -36,6 +36,7 @@ class FakeCluster:
 
     def feed_script(self, spec, script_path: Path, args: list, timeout=None) -> subprocess.CompletedProcess:
         assert script_path == records.SCRIPT_PATH
+        assert timeout == PROBE_TIMEOUT  # a hung cluster must not hang ctun
         command, *rest = args
         if command == "refs":
             self.note_checks.append(rest)
