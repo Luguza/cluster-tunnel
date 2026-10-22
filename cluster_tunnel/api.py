@@ -926,7 +926,8 @@ def rename_project(
     SSH call. Works on ``cluster``, or on every configured cluster with a live
     tunnel; a down cluster keeps ``old``, so call it again once it is logged in,
     which is safe. Both names are taken as :func:`records.project_name` stores
-    them; ``ValueError`` if either is empty then.
+    them; ``ValueError`` if either is empty then. A damaged record (no job ID,
+    a project that is no string) is left as it is.
     """
     old, new = records_mod.project_name(old), records_mod.project_name(new)
     if not old:
@@ -940,10 +941,10 @@ def rename_project(
             try:
                 changed = []
                 for current in records_mod.list_all_raw(spec):
-                    job_id = str(current.get("job_id"))
+                    job_id = records_mod.job_id_of(current)
                     project = records_mod.renamed_project(current.get("project"), old, new)
-                    if project is None:
-                        continue
+                    if job_id is None or project is None:
+                        continue  # a damaged record must not stop the others
                     updated = records_mod.edited(current, job_id, project=project, note=None, confirm_note=False)
                     if updated is not None:
                         changed.append(updated)

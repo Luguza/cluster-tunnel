@@ -598,6 +598,23 @@ def test_a_rename_into_a_project_inside_old_is_safe_to_run_again(tmp_path: Path,
     assert {job_id: record["project"] for job_id, record in cluster.written.items()} == renamed
 
 
+def test_damaged_records_neither_stop_nor_break_a_rename(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "a": {"project": "htfm"},
+        "b": {"job_id": "../x", "project": "htfm"},
+        "c": {"job_id": True, "project": "htfm"},
+        "d": {"job_id": "8", "project": 5},
+        "7": {"job_id": 7, "project": "htfm"},
+    }
+    _patch_job(monkeypatch, cluster)
+    assert api.projects("localhost")[0].error is None  # project 5 is not counted, and nothing breaks
+    [entry] = api.rename_project("htfm", "eval", "localhost")
+    assert entry.error is None and entry.renamed == ["7"]
+    assert cluster.written["7"]["project"] == "eval" and cluster.written["a"] == {"project": "htfm"}
+
+
 def test_project_names_lose_stray_slashes_and_blanks() -> None:
     assert records.project_name(" archive//htfm/ ") == "archive/htfm"
     assert records.project_name("a / b") == "a/b"

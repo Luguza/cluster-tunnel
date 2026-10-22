@@ -47,6 +47,14 @@ def is_job_id(text: str) -> bool:
     return _JOB_ID.fullmatch(text) is not None
 
 
+def job_id_of(raw: dict[str, Any]) -> Optional[str]:
+    """The job ID a raw record names, or ``None`` when it names none a record could be stored under."""
+    job_id = raw.get("job_id")
+    if isinstance(job_id, (str, int)) and not isinstance(job_id, bool) and is_job_id(str(job_id)):
+        return str(job_id)
+    return None
+
+
 def keys(job_id: str) -> list[str]:
     """The records a job as squeue lists it may have, the closest first.
 
@@ -111,7 +119,7 @@ def projects(records: list[JobRecord]) -> list[dict[str, Any]]:
     """Each project the ``records`` name, by name, with its number of jobs; records without one are left out."""
     counts: dict[str, int] = {}
     for record in records:
-        if record.project:
+        if record.project and isinstance(record.project, str):
             counts[record.project] = counts.get(record.project, 0) + 1
     return [{"project": project, "jobs": counts[project]} for project in sorted(counts)]
 
