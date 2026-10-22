@@ -113,8 +113,8 @@ class ExecutionCommandsMixin:
             fail(str(exc), exc.exit_code)
         except api.NoteReferenceInvalid as exc:
             hint = (
-                "\n  Commit references are looked up in the repos of this project's earlier"
-                " records. Fix or drop them, or leave the note out."
+                "\n  A job reference must name a job squeue, sacct or a job record knows."
+                " Fix or drop it, or leave the note out."
                 if exc.unknown
                 else ""
             )

@@ -626,9 +626,11 @@ def run(
     record is stored on the cluster: ``project``, ``note``, and the facts ctun
     collects there itself (job name, working directory, the git state in it). A
     fact or record that can't be had only adds to ``Result.warnings``. The
-    ``commit:<hash>`` and ``job:<id>`` references in a ``note`` that will be
-    stored are checked on the cluster first: one it doesn't know raises
-    :class:`NoteReferenceInvalid`, and nothing runs.
+    ``job:<id>`` references in a ``note`` that will be stored are checked on
+    the cluster first: one it doesn't know raises :class:`NoteReferenceInvalid`,
+    and nothing runs. Its ``commit:<hash>`` references are checked once the jobs
+    are submitted, also in their own repos; one the cluster doesn't know is
+    stored all the same, with a warning.
     """
     if capture and tty:
         raise ValueError("a TTY needs streamed output; pass capture=False")
@@ -639,7 +641,8 @@ def run(
     spec = _spec(config, cluster)
     decision = _preflight(config, path, cluster, spec, tokens)
     if note and not tty and config.clusters[cluster].job_records:
-        _check_note(spec, note, project)
+        # Commits only after the submission: the first job of a project brings its repo.
+        _check_note(spec, notes_mod.references(note, "job"))
     if on_preflight is not None:
         on_preflight(decision)
     # Log the command (not its output) so `status` can show activity.
@@ -815,13 +818,16 @@ def edit_job(
         raise RecordError(f"job_records is off for '{cluster}'.")
     try:
         current = records_mod.read(spec, job_id)
-        if current is None and notes_mod.unknown_references(spec, f"job:{job_id}", None):
+        if current is None and notes_mod.unknown_references(spec, [f"job:{job_id}"]):
             raise RecordError(f"Job {job_id} is unknown on '{cluster}' (not in squeue or sacct).")
         updated = records_mod.edited(current, job_id, project=project, note=note, confirm_note=confirm_note)
         if updated is None:
             return RecordEdit(job_id, current, changed=False)
         if note:
-            _check_note(spec, note, updated.get("project"))
+            workdir = (updated.get("code") or {}).get("workdir")
+            _check_note(
+                spec, notes_mod.references(note), project=updated.get("project"), repos=[workdir] if workdir else []
+            )
         records_mod.update(spec, updated)
     except (RuntimeError, ValueError) as exc:
         raise RecordError(str(exc)) from exc
@@ -877,10 +883,16 @@ def _host_keys(cluster: str, action: str, call: Callable):
         raise HostKeyError(f"cannot {action} the host key of '{cluster}': {exc}") from exc
 
 
-def _check_note(spec: ConnSpec, note: str, project: Optional[str]) -> None:
-    """Raise :class:`NoteReferenceInvalid` if ``note`` names a commit or job the cluster doesn't know."""
+def _check_note(
+    spec: ConnSpec, refs: list[str], *, project: Optional[str] = None, repos: Sequence[str] = ()
+) -> None:
+    """Raise :class:`NoteReferenceInvalid` if a note's ``refs`` name a commit or job the cluster doesn't know.
+
+    ``project`` and ``repos`` say where to look for commits, as in
+    :func:`notes.unknown_references`.
+    """
     try:
-        unknown = notes_mod.unknown_references(spec, note, project)
+        unknown = notes_mod.unknown_references(spec, refs, project=project, repos=repos)
     except RuntimeError as exc:
         raise NoteReferenceInvalid(str(exc)) from exc
     if unknown:
@@ -903,6 +915,24 @@ def _write_records(
             result.warnings.append(str(exc))
             continue
         result.records.append(record)
+    commits = notes_mod.references(note, "commit") if note else []
+    if commits and result.records:
+        _check_note_commits(spec, result, commits, project)
+
+
+def _check_note_commits(spec: ConnSpec, result: Result, commits: list[str], project: Optional[str]) -> None:
+    """Warn in ``result.warnings`` about the ``commits`` of a stored note that the cluster doesn't know."""
+    repos = [record.code["workdir"] for record in result.records if record.code.get("workdir")]
+    try:
+        unknown = notes_mod.unknown_references(spec, commits, project=project, repos=repos)
+    except RuntimeError as exc:
+        result.warnings.append(f"the note's commit references were not checked: {exc}")
+        return
+    if unknown:
+        result.warnings.append(
+            "the note is stored, but its commits are in neither the job's repo nor its project's: "
+            + ", ".join(unknown)
+        )
 
 
 def _preflight(config: Config, path: Path, name: str, spec: ConnSpec, tokens: list[str]) -> Decision:

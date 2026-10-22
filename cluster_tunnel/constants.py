@@ -51,7 +51,7 @@ class ExitCode(enum.IntEnum):
     LOGIN_REQUIRED = 10      #: No live tunnel — the caller must `login` again.
     BUDGET_EXHAUSTED = 11    #: Guarded command blocked: usage at/over the limit.
     BUDGET_GUARD_ERROR = 12  #: Guarded command blocked: budget couldn't be verified.
-    NOTE_REFERENCE_INVALID = 13  #: `--note` names a commit or job the cluster doesn't know.
+    NOTE_REFERENCE_INVALID = 13  #: `--note` names a job (or commit, in an edit) the cluster doesn't know.
 
 
 #: Machine-readable markers printed to stderr (``ctun-error: <marker>``) alongside

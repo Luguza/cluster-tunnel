@@ -104,7 +104,8 @@ several jobs it stops at the first that fails; the jobs before it keep their
 change, and running the fixed command again leaves them as they are. To read
 records without changing them, use `jobs --json`; widen `--since` for older
 jobs. A `/` in a project nests it. A new note is unconfirmed until
-`--confirm-note`, and its references are checked as in `run` (exit code 13).
+`--confirm-note`, and its references are checked as in `run`, commits in the
+job's own repo too; an unknown one refuses the edit (exit code 13).
 Each edit appends `{at, from, <field>: [old, new]}` to the record's `changes`;
 the facts from submit time are never changed. A job that has no record yet
 (e.g. one submitted with plain `sbatch`) gets one without facts; ctun refuses a
@@ -234,11 +235,13 @@ with `--tty` (the output is not read) and for a cluster with
 
 **Notes are drafts for the human.** Put only facts from this session into
 `--note` (what changed and why), never guesses about results. Refer to a commit
-as `commit:<hash>` and to a job as `job:<id>`; ctun checks each reference before
-it runs the command, and refuses the run with exit code 13
+as `commit:<hash>` and to a job as `job:<id>`. ctun checks each job reference
+before it runs the command, and refuses the run with exit code 13
 (`ctun-error: note_reference_invalid`) if one cannot be found. Commit references
-are looked up in the repos of the project's earlier records, so leave them out
-of a project's first note. When unsure, leave the note out.
+are checked after the submission, in the new job's repo and in those of the
+project's earlier records; one that cannot be found is stored as written, with a
+warning on stderr: fix it with `jobs edit --note`. When unsure, leave the note
+out.
 
 ```
 ctun -t haicore run --project htfm --note "lr 1e-3 after commit:541b4cb, rerun of job:1695485" -- bash -c 'cd $REPO && ./submit.sh'

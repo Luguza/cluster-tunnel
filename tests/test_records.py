@@ -211,18 +211,40 @@ def test_references_finds_markers_once() -> None:
     assert notes.references(note) == ["job:1695485", "commit:541b4cb"]
 
 
-def test_note_with_unknown_reference_is_refused_before_running(tmp_path: Path, monkeypatch) -> None:
+def test_note_with_an_unknown_job_is_refused_before_running(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     cluster = FakeCluster(known_refs=("job:7",))
-    cluster.written["1"] = {"job_id": "1", "project": "htfm", "code": {"workdir": "/work/repo"}}
-    cluster.written["2"] = {"job_id": "2", "project": "other", "code": {"workdir": "/work/other"}}
     _patch_run(monkeypatch, cluster, "Submitted batch job 8\n")
-    note = "after job:7 and commit:abcdef1"
+    note = "after job:7 and job:6, at commit:abcdef1"
     r = CliRunner().invoke(cli, ["-t", "localhost", "run", "--project", "htfm", "--note", note, "--", "sbatch", "x"])
     assert r.exit_code == ExitCode.NOTE_REFERENCE_INVALID
-    assert "commit:abcdef1" in r.output and "note_reference_invalid" in r.output
+    assert "job:6" in r.output and "note_reference_invalid" in r.output
     assert "8" not in cluster.written  # nothing ran, so nothing was recorded
-    assert cluster.note_checks == [["/work/repo", "--", "job:7", "commit:abcdef1"]]
+    assert cluster.note_checks == [["--", "job:7", "job:6"]]  # commits wait for the submission
+
+
+def test_note_with_an_unknown_commit_is_stored_with_a_warning(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written["1"] = {"job_id": "1", "project": "htfm", "code": {"workdir": "/work/old"}}
+    cluster.written["2"] = {"job_id": "2", "project": "other", "code": {"workdir": "/work/other"}}
+    _patch_run(monkeypatch, cluster, "Submitted batch job 8\n")
+    note = "at commit:abcdef1"
+    r = CliRunner().invoke(cli, ["-t", "localhost", "run", "--project", "htfm", "--note", note, "--", "sbatch", "x"])
+    assert r.exit_code == 0, r.output
+    assert cluster.written["8"]["note"] == note
+    assert "commits are in neither the job's repo nor its project's: commit:abcdef1" in _norm(r)
+    # The new job's repo, then those of the project's records.
+    assert cluster.note_checks == [["/work/repo", "/work/old", "--", "commit:abcdef1"]]
+
+
+def test_the_first_job_of_a_project_may_name_a_commit_of_its_repo(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster(known_refs=("commit:abcdef1",))
+    _patch_run(monkeypatch, cluster, "Submitted batch job 8\n")
+    result = api.run("localhost", ["sbatch", "x"], project="new", note="at commit:abcdef1")
+    assert result.warnings == [] and result.records[0].note == "at commit:abcdef1"
+    assert cluster.note_checks == [["/work/repo", "--", "commit:abcdef1"]]
 
 
 def test_api_run_raises_on_an_unknown_reference(tmp_path: Path, monkeypatch) -> None:
@@ -354,6 +376,15 @@ def test_job_edit_checks_the_note_references(tmp_path: Path, monkeypatch) -> Non
     r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "--note", "after job:5"])
     assert r.exit_code == ExitCode.NOTE_REFERENCE_INVALID
     assert "Not saved" in r.output and "note" not in cluster.written["7"]
+
+
+def test_job_edit_looks_for_commits_in_the_jobs_own_repo(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster(known_refs=("commit:abcdef1",))
+    cluster.written["7"] = {"job_id": "7", "code": {"workdir": "/work/repo"}}
+    _patch_job(monkeypatch, cluster)
+    assert api.edit_job("localhost", "7", note="at commit:abcdef1").changed
+    assert cluster.note_checks == [["/work/repo", "--", "commit:abcdef1"]]
 
 
 def test_jobs_edit_without_a_change_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:

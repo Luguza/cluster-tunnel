@@ -102,7 +102,8 @@ class LoginError(ClusterTunnelError):
 
 
 class NoteReferenceInvalid(ClusterTunnelError):
-    """A job note names a ``commit:<hash>`` or ``job:<id>`` the cluster doesn't know; nothing ran.
+    """A job note names a ``job:<id>`` (or, in an edit, a ``commit:<hash>``) the cluster
+    doesn't know; nothing ran, or the edit was not saved.
 
     ``unknown`` lists those references; it is empty when the check itself
     could not run, which refuses the note all the same.
