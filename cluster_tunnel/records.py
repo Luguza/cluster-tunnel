@@ -117,12 +117,16 @@ class JobRecord:
 
 
 def projects(records: list[JobRecord]) -> list[dict[str, Any]]:
-    """Each project the ``records`` name, by name, with its number of jobs; records without one are left out."""
-    counts: dict[str, int] = {}
+    """Each project the ``records`` name, by name, with its number of jobs; records without one are left out.
+
+    An array counts once, also when some of its tasks have records of their own.
+    """
+    jobs: dict[str, set[str]] = {}
     for record in records:
-        if record.project and isinstance(record.project, str):
-            counts[record.project] = counts.get(record.project, 0) + 1
-    return [{"project": project, "jobs": counts[project]} for project in sorted(counts)]
+        found = keys(record.job_id)
+        if found and record.project and isinstance(record.project, str):
+            jobs.setdefault(record.project, set()).add(found[-1])
+    return [{"project": project, "jobs": len(jobs[project])} for project in sorted(jobs)]
 
 
 def project_name(name: str) -> str:

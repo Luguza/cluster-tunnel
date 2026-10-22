@@ -575,6 +575,20 @@ def test_projects_list_counts_the_jobs_of_every_record(tmp_path: Path, monkeypat
     assert [item.as_dict() for item in api.projects("localhost")] == [entry]
 
 
+def test_projects_list_counts_an_array_once(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "123": {"job_id": "123", "project": "htfm"},
+        "123_1": {"job_id": "123_1", "project": "htfm"},
+        "123_2": {"job_id": "123_2", "project": "htfm/fix"},
+        "../x": {"job_id": "../x", "project": "htfm"},
+    }
+    _patch_job(monkeypatch, cluster)
+    [entry] = api.projects("localhost")
+    assert entry.projects == [{"project": "htfm", "jobs": 1}, {"project": "htfm/fix", "jobs": 1}]
+
+
 def test_projects_list_skips_a_down_tunnel(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     _patch_job(monkeypatch, FakeCluster())
