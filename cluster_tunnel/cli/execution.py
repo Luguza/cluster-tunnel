@@ -73,7 +73,9 @@ def _show_budget(decision) -> None:
 class ExecutionCommandsMixin:
     """Mixin providing the `run` command."""
 
-    @click.command("run", context_settings={"ignore_unknown_options": True})
+    # ctun's options end at the command's first word: `run python train.py --note x`
+    # passes `--note x` on to train.py, as written.
+    @click.command("run", context_settings={"ignore_unknown_options": True, "allow_interspersed_args": False})
     @click.pass_obj
     @click.option("--tty", is_flag=True, help="Allocate a pseudo-TTY (for interactive remote programs).")
     @click.option("-n", "--dry-run", is_flag=True, help="Run the budget pre-flight check only; don't execute.")

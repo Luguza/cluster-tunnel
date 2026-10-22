@@ -192,6 +192,8 @@ ctun -t <cluster> run [--tty] [-n|--dry-run] [--project NAME] [--note TEXT] -- <
 ```
 
 - Everything after `--` is forwarded to the cluster **exactly as written**.
+  ctun's own options (`--tty`, `-n`, `--project`, `--note`) go before the
+  command: after its first word, every option belongs to the command.
 - The remote command's **exit code is propagated** as `ctun`'s exit code;
   output streams live.
 - `--tty`: allocate a pseudo-terminal for interactive remote programs.

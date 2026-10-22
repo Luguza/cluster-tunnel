@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ctun jobs list` names the overview next to `jobs edit`; plain `ctun jobs` works
   as before.
 
+### Changed
+
+- **`ctun run` options go before the command.** ctun's own options end at the
+  command's first word, so `ctun run python train.py --note x` passes `--note x`
+  to `train.py` instead of taking it as the job's note. So does a `--tty` or `-n`
+  after the command: write `ctun run --tty -- htop`, not `ctun run htop --tty`.
+
 ## [0.8.0] - 2026-10-20
 
 ### Added

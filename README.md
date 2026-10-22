@@ -297,7 +297,8 @@ $ ctun -t horeka run [--tty] [-n|--dry-run] -- <command> [args…]
 ```
 
 - Everything after `--` is forwarded to the cluster exactly as written, so flags like
-  `--me` or `--time=01:00:00` pass straight through.
+  `--me` or `--time=01:00:00` pass straight through. `ctun`'s own options go before the
+  command: after its first word, every option belongs to the command, `--` or not.
 - The command's **exit code is propagated** as `ctun`'s exit code, and output is streamed
   live.
 - `--tty` allocates a pseudo-terminal for interactive remote programs.
