@@ -28,8 +28,9 @@ FACTS_OUTPUT = (
 class FakeCluster:
     """Answers `feed_script` for records.sh like a cluster would."""
 
-    def __init__(self, facts_rc: int = 0, known_refs: tuple[str, ...] = ()) -> None:
+    def __init__(self, facts_rc: int = 0, known_refs: tuple[str, ...] = (), submitted_ago: int = 2) -> None:
         self.facts_rc = facts_rc
+        self.submitted_ago = submitted_ago
         self.known_refs = known_refs
         self.written: dict[str, dict] = {}
         self.note_checks: list[list] = []
@@ -44,7 +45,7 @@ class FakeCluster:
         if command == "facts":
             if self.facts_rc:
                 return subprocess.CompletedProcess([], self.facts_rc, "", "squeue: not found")
-            return subprocess.CompletedProcess([], 0, FACTS_OUTPUT, "")
+            return subprocess.CompletedProcess([], 0, f"{FACTS_OUTPUT}submitted_ago={self.submitted_ago}\n", "")
         if command in ("write", "update"):
             job_id, payload = rest
             self.written[job_id] = json.loads(base64.b64decode(payload))
@@ -122,6 +123,18 @@ def test_a_failing_fact_warns_but_still_records(tmp_path: Path, monkeypatch) -> 
     assert "could not collect the facts of job 7" in r.output
     assert cluster.written["7"]["code"]["commit"] is None
     assert cluster.written["7"]["slurm_cluster"] is None
+
+
+def test_a_job_older_than_the_command_gets_no_record(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster(submitted_ago=3 * 3600)
+    _patch_run(monkeypatch, cluster, "Submitted batch job 7\n")
+    r = CliRunner().invoke(cli, ["-t", "localhost", "run", "--", "cat", "submit.log"])
+    assert r.exit_code == 0 and cluster.written == {}
+    assert "ctun:" not in r.output  # nothing was asked for, so nothing to warn about
+    result = api.run("localhost", ["cat", "submit.log"], note="lr sweep")
+    assert result.job_ids == ["7"] and result.records == []
+    assert result.warnings == ["no record for job 7: it was submitted before this command"]
 
 
 def test_records_off_writes_no_record(tmp_path: Path, monkeypatch) -> None:

@@ -20,6 +20,8 @@ class JobFacts:
 
     slurm_cluster: Optional[str] = None
     job_name: Optional[str] = None
+    #: Seconds since Slurm took the job, measured on the cluster.
+    submitted_ago: Optional[int] = None
     workdir: Optional[str] = None
     commit: Optional[str] = None
     branch: Optional[str] = None
@@ -44,6 +46,8 @@ def parse(output: str) -> JobFacts:
             dirty.append(value)
         elif key == "dirty_omitted" and value.isdigit():
             omitted = int(value)
+        elif key == "submitted_ago" and value.lstrip("-").isdigit():
+            facts.submitted_ago = int(value)
         elif key == "pushed":
             facts.pushed = value == "yes"
         elif key in ("slurm_cluster", "job_name", "workdir", "commit", "branch"):

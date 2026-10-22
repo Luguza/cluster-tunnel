@@ -215,7 +215,9 @@ ctun -t haicore run -- bash -c 'cd $WORK && sbatch job.sh'
 ### Job records
 
 For every `Submitted batch job <N>` line in the output, `run` stores a
-**job record** on the cluster, in `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`.
+**job record** on the cluster, in `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`,
+unless Slurm took job `<N>` before the command started (`run -- cat submit.log`
+prints old IDs; they get no record).
 Every machine that submits to that cluster sees the same records. It holds:
 
 - `--project NAME` and `--note TEXT`, if given (both optional);

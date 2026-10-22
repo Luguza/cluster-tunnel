@@ -24,7 +24,8 @@ def _fake_tools(tmp_path: Path, workdir: str = "") -> Path:
         "squeue": (
             "#!/bin/sh\n"
             'for last; do :; done\n'
-            'case "$last" in %j) echo "train job" ;; %Z) echo "' + workdir + '" ;; esac\n'
+            'case "$last" in %j) echo "train job" ;; %V) echo "2020-01-01T00:00:00" ;;'
+            ' %Z) echo "' + workdir + '" ;; esac\n'
         ),
         "sacct": "#!/bin/sh\nexit 0\n",
     }
@@ -129,6 +130,7 @@ def test_facts_report_job_and_code(tmp_path: Path, bash: str, repo: Path) -> Non
     assert facts["branch"] == "main"
     assert facts["pushed"] == "no"
     assert len(facts["commit"]) == 40
+    assert int(facts["submitted_ago"]) > 365 * 24 * 3600  # since the fake 2020 submit time
     assert "dirty=?? train.py" in result.stdout
 
 

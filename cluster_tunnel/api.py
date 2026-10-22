@@ -26,6 +26,7 @@ Example::
 
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Union
@@ -628,8 +629,10 @@ def run(
 
     For each submitted job, unless the cluster has ``job_records: false``, a
     record is stored on the cluster: ``project``, ``note``, and the facts ctun
-    collects there itself (job name, working directory, the git state in it). A
-    fact or record that can't be had only adds to ``Result.warnings``. The
+    collects there itself (job name, working directory, the git state in it),
+    except for a job Slurm took before the command started: its ID was only
+    printed, e.g. by ``cat`` of a log. A fact or record that can't be had only
+    adds to ``Result.warnings``. The
     ``job:<id>`` references in a ``note`` that will be stored are checked on
     the cluster first: one it doesn't know raises :class:`NoteReferenceInvalid`,
     and nothing runs. Its ``commit:<hash>`` references are checked once the jobs
@@ -665,6 +668,7 @@ def run(
             job_ids.append(job_id)
             cmdlog.record_jobs(cluster, entry_id, [job_id])
 
+    started = time.monotonic()
     if capture:
         res = ssh.capture(spec, tokens, timeout=timeout)
         result = Result(res.returncode, res.stdout, res.stderr)
@@ -673,7 +677,9 @@ def run(
         result = Result(ssh.run(spec, tokens, on_line=submitted))
     result.job_ids = job_ids
     if config.clusters[cluster].job_records:
-        _write_records(spec, result, project=project, note=note, command=tokens)
+        _write_records(
+            spec, result, project=project, note=note, command=tokens, ran_for=time.monotonic() - started
+        )
     elif project or note:
         result.warnings.append("no job record written (job_records is off for this cluster)")
     return result
@@ -906,12 +912,31 @@ def _check_note(
         )
 
 
+#: Seconds a job may seem older than the command that submitted it: Slurm's
+#: clock and the login node's may differ a little.
+_SUBMIT_SLACK = 60
+
+
 def _write_records(
-    spec: ConnSpec, result: Result, *, project: Optional[str], note: Optional[str], command: list[str]
+    spec: ConnSpec,
+    result: Result,
+    *,
+    project: Optional[str],
+    note: Optional[str],
+    command: list[str],
+    ran_for: float,
 ) -> None:
-    """Store a record for each job in ``result.job_ids``; a failure goes in ``result.warnings``, never raises."""
+    """Store a record for each job in ``result.job_ids``; a failure goes in ``result.warnings``, never raises.
+
+    A job Slurm took more than ``ran_for`` seconds ago (the command's run time)
+    is an old one the command only printed, and gets none.
+    """
     for job_id in result.job_ids:
         facts = facts_mod.collect(spec, job_id)
+        if facts.submitted_ago is not None and facts.submitted_ago > ran_for + _SUBMIT_SLACK:
+            if project or note:
+                result.warnings.append(f"no record for job {job_id}: it was submitted before this command")
+            continue
         result.warnings.extend(facts.warnings)
         record = records_mod.build(job_id, facts, project=project, note=note, command=command)
         try:

@@ -71,6 +71,7 @@ decode_to_temp() {
 #
 #   slurm_cluster=<ClusterName from slurm.conf>
 #   job_name=<job name>
+#   submitted_ago=<seconds since Slurm took the job, by this host's clock>
 #   workdir=<the job's working directory>
 #   commit=<HEAD of the git repo in workdir>
 #   branch=<its branch, or HEAD when detached>
@@ -81,16 +82,23 @@ decode_to_temp() {
 # The git facts describe the repo when this runs, after the submitting command
 # finished; that is submit time unless the command changed the repo after sbatch.
 facts() {
-    local job_id="$1" name workdir status total max_dirty=100
+    local job_id="$1" name submit workdir status total max_dirty=100
     [ -n "$cluster" ] && echo "slurm_cluster=$cluster"
     # squeue first: a job submitted a moment ago is almost always still queued.
     name="$(squeue -h -j "$job_id" -o '%j' 2>/dev/null | head -n 1)"
+    submit="$(squeue -h -j "$job_id" -o '%V' 2>/dev/null | head -n 1)"
     workdir="$(squeue -h -j "$job_id" -o '%Z' 2>/dev/null | head -n 1)"
     if [ -z "$workdir" ]; then
         name="$(sacct -n -X -P -j "$job_id" -o JobName 2>/dev/null | head -n 1)"
+        submit="$(sacct -n -X -P -j "$job_id" -o Submit 2>/dev/null | head -n 1)"
         workdir="$(sacct -n -X -P -j "$job_id" -o WorkDir 2>/dev/null | head -n 1)"
     fi
     [ -n "$name" ] && echo "job_name=$name"
+    # Lets ctun tell a job the command submitted from an old one it printed (`cat`).
+    # (`date -d ""` would read as midnight, hence the -n.)
+    if [ -n "$submit" ] && submit="$(date -d "$submit" +%s 2>/dev/null)"; then
+        echo "submitted_ago=$(( $(date +%s) - submit ))"
+    fi
     [ -n "$workdir" ] || return 0
     echo "workdir=$workdir"
 

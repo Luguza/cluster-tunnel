@@ -28,7 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Older logs still read.
 - **Job records.** For each `Submitted batch job <N>` in its output, `ctun run`
   stores a record on the cluster in
-  `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`, so every machine sees it. It holds
+  `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`, so every machine sees it (not for
+  a job Slurm took before the command started, as in `cat submit.log`). It holds
   the new optional `--project` and `--note` (`api.run(project=, note=)`), and
   facts ctun collects itself: job name and working directory from Slurm, and the
   git commit, branch, pushed state and uncommitted files there at submit time
