@@ -57,7 +57,9 @@ class JobRecord:
     note_confirmed: bool
     submitted_at: Optional[str]
     submitted_from: Optional[str]
-    #: ``{workdir, commit, branch, pushed, uncommitted}``; each may be ``None`` (unknown).
+    #: ``{workdir, commit, branch, pushed, uncommitted, uncommitted_omitted}``; each may be
+    #: ``None`` (unknown). ``uncommitted`` lists up to 100 files, ``uncommitted_omitted``
+    #: counts the rest.
     code: dict[str, Any]
     command: list[str]
     #: One entry per edit: ``{at, from, <field>: [old, new], ...}``, oldest first.
@@ -112,6 +114,7 @@ def build(
             "branch": facts.branch,
             "pushed": facts.pushed,
             "uncommitted": facts.uncommitted,
+            "uncommitted_omitted": facts.uncommitted_omitted,
         },
         command=command,
         changes=[],

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from cluster_tunnel import api, jobs, notes, records
+from cluster_tunnel import api, facts, jobs, notes, records
 from cluster_tunnel.cli import cli
 from cluster_tunnel.constants import PROBE_TIMEOUT, ExitCode
 from tests.test_cli import _cfg, _norm, _patch_jobs
@@ -90,6 +90,7 @@ def test_run_writes_a_record_with_the_facts(tmp_path: Path, monkeypatch) -> None
         "branch": "main",
         "pushed": False,
         "uncommitted": [" M models/train.py"],
+        "uncommitted_omitted": 0,
     }
     assert record["submitted_at"] and record["submitted_from"]
 
@@ -149,6 +150,12 @@ def test_from_json_ignores_unknown_keys_and_fills_missing() -> None:
     record = records.JobRecord.from_json('{"job_id": 5, "future_field": [1], "project": "p"}')
     assert record.job_id == "5" and record.project == "p"
     assert record.note is None and record.code == {} and record.command == []
+
+
+def test_facts_count_the_uncommitted_files_left_out() -> None:
+    parsed = facts.parse("commit=abc\ndirty= M a.py\ndirty_omitted=523\n")
+    assert parsed.uncommitted == [" M a.py"] and parsed.uncommitted_omitted == 523
+    assert facts.parse("workdir=/x\n").uncommitted_omitted is None  # no repo, nothing known
 
 
 def test_submitted_job_ids_reads_every_submission() -> None:

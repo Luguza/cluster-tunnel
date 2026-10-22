@@ -75,12 +75,13 @@ decode_to_temp() {
 #   commit=<HEAD of the git repo in workdir>
 #   branch=<its branch, or HEAD when detached>
 #   pushed=yes|no            (HEAD is on a remote-tracking branch, as of the last fetch)
-#   dirty=<porcelain line>   (one per uncommitted file)
+#   dirty=<porcelain line>   (one per uncommitted file, the first 100)
+#   dirty_omitted=<count>    (the uncommitted files beyond those, if any)
 #
 # The git facts describe the repo when this runs, after the submitting command
 # finished; that is submit time unless the command changed the repo after sbatch.
 facts() {
-    local job_id="$1" name workdir
+    local job_id="$1" name workdir status total max_dirty=100
     [ -n "$cluster" ] && echo "slurm_cluster=$cluster"
     # squeue first: a job submitted a moment ago is almost always still queued.
     name="$(squeue -h -j "$job_id" -o '%j' 2>/dev/null | head -n 1)"
@@ -101,7 +102,14 @@ facts() {
     else
         echo "pushed=no"
     fi
-    git -C "$workdir" status --porcelain 2>/dev/null | sed 's/^/dirty=/'
+    # The record travels as a command-line argument, so a repo with thousands of
+    # changed files must not make it too long to store.
+    status="$(git -C "$workdir" status --porcelain 2>/dev/null)"
+    [ -n "$status" ] || return 0
+    printf '%s\n' "$status" | head -n "$max_dirty" | sed 's/^/dirty=/'
+    total="$(printf '%s\n' "$status" | wc -l)"
+    [ "$total" -gt "$max_dirty" ] && echo "dirty_omitted=$(( total - max_dirty ))"
+    return 0
 }
 
 # refs <repo>... -- <reference>...: prints each reference it can find, one per

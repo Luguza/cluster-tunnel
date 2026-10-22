@@ -132,6 +132,15 @@ def test_facts_report_job_and_code(tmp_path: Path, bash: str, repo: Path) -> Non
     assert "dirty=?? train.py" in result.stdout
 
 
+def test_facts_list_at_most_100_uncommitted_files(tmp_path: Path, bash: str, repo: Path) -> None:
+    for n in range(104):
+        (repo / f"f{n:03}.txt").write_text("x\n", encoding="utf-8")
+    result = _run(bash, tmp_path, "records.sh", "facts", "101", workdir=_posix_path(bash, repo))
+    lines = result.stdout.splitlines()
+    assert sum(line.startswith("dirty=") for line in lines) == 100
+    assert "dirty_omitted=5" in lines  # 104 files and train.py
+
+
 def test_facts_without_workdir_report_only_the_cluster(tmp_path: Path, bash: str) -> None:
     result = _run(bash, tmp_path, "records.sh", "facts", "101")
     assert result.returncode == 0

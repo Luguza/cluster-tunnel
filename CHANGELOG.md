@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`, so every machine sees it. It holds
   the new optional `--project` and `--note` (`api.run(project=, note=)`), and
   facts ctun collects itself: job name and working directory from Slurm, and the
-  git commit, branch, pushed state and uncommitted files there at submit time. A
+  git commit, branch, pushed state and uncommitted files there at submit time
+  (at most 100 files, and `uncommitted_omitted` counting the rest). A
   failing fact only warns (`Result.warnings`). `ctun jobs --json`
   (`api.jobs(with_records=True)`) attaches each job's `record` and lists
   `records_without_job` per cluster. Turn it off per cluster with

@@ -24,8 +24,10 @@ class JobFacts:
     commit: Optional[str] = None
     branch: Optional[str] = None
     pushed: Optional[bool] = None
-    #: ``git status --porcelain`` lines; ``None`` when there is no git repo.
+    #: ``git status --porcelain`` lines, the first 100; ``None`` when there is no git repo.
     uncommitted: Optional[list[str]] = None
+    #: How many more uncommitted files there are than ``uncommitted`` lists.
+    uncommitted_omitted: Optional[int] = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -33,18 +35,22 @@ def parse(output: str) -> JobFacts:
     """Parse the ``key=value`` lines of ``records.sh facts``; unknown keys are ignored."""
     facts = JobFacts()
     dirty: list[str] = []
+    omitted = 0
     for line in output.splitlines():
         key, sep, value = line.partition("=")
         if not sep:
             continue
         if key == "dirty":
             dirty.append(value)
+        elif key == "dirty_omitted" and value.isdigit():
+            omitted = int(value)
         elif key == "pushed":
             facts.pushed = value == "yes"
         elif key in ("slurm_cluster", "job_name", "workdir", "commit", "branch"):
             setattr(facts, key, value)
     if facts.commit is not None:
         facts.uncommitted = dirty
+        facts.uncommitted_omitted = omitted
     return facts
 
 

@@ -219,7 +219,8 @@ Every machine that submits to that cluster sees the same records. It holds:
 - `--project NAME` and `--note TEXT`, if given (both optional);
 - facts ctun collects itself, never from you: the job's name and working
   directory (from Slurm), and the git state there at submit time (`commit`,
-  `branch`, `pushed`, `uncommitted` files), plus the command, the submitting
+  `branch`, `pushed`, `uncommitted` files: at most 100, with
+  `uncommitted_omitted` counting the rest), plus the command, the submitting
   host and the time;
 - `note_confirmed`, true once the human confirmed the note, and `changes`, the
   log of later edits (see [`jobs edit`](#jobs-edit--change-jobs-project-or-note)).
