@@ -324,3 +324,96 @@ def test_scan_asks_for_the_algorithm_a_login_negotiates(tmp_path: Path) -> None:
     spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
     assert "HostKeyAlgorithms=rsa-sha2-512" in ssh.scan_opts(spec, "rsa-sha2-512")
     assert not any(o.startswith("HostKeyAlgorithms") for o in ssh.scan_opts(spec))
+
+
+# --- run with on_line: the streamed output, for real --------------------------------
+
+
+def _streaming(tmp_path: Path, monkeypatch, code: str) -> ConnSpec:
+    """A spec whose `run` starts a local Python child running ``code`` instead of ssh.
+
+    The children write bytes, as ssh does: a text stdout would end lines in
+    ``\\r\\n`` on Windows.
+    """
+    monkeypatch.setattr(wsl, "launch", lambda argv, distro=None: [sys.executable, "-c", code])
+    return ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+
+
+def test_streamed_run_passes_stdout_through_and_scans_its_lines(tmp_path: Path, monkeypatch, capsys) -> None:
+    code = "import sys; sys.stdout.buffer.write(b'a\\nSubmitted batch job 7\\ntail'); sys.exit(3)"
+    spec = _streaming(tmp_path, monkeypatch, code)
+    lines: list[str] = []
+    assert ssh.run(spec, ["sbatch", "j.sh"], on_line=lines.append) == 3
+    assert capsys.readouterr().out == "a\nSubmitted batch job 7\ntail"
+    assert lines == ["a", "Submitted batch job 7", "tail"]
+
+
+def test_streamed_run_joins_a_line_split_across_reads(tmp_path: Path, monkeypatch) -> None:
+    code = (
+        "import sys, time\n"
+        "sys.stdout.buffer.write(b'Submitted ba'); sys.stdout.flush(); time.sleep(0.2)\n"
+        "sys.stdout.buffer.write(b'tch job 8\\n')\n"
+    )
+    spec = _streaming(tmp_path, monkeypatch, code)
+    lines: list[str] = []
+    assert ssh.run(spec, ["sbatch", "j.sh"], on_line=lines.append) == 0
+    assert lines == ["Submitted batch job 8"]
+
+
+def test_streamed_run_keeps_only_the_start_of_a_huge_line(tmp_path: Path, monkeypatch, capsys) -> None:
+    code = "import sys; sys.stdout.buffer.write(b'x' * 300000 + b'\\nok\\n')"
+    spec = _streaming(tmp_path, monkeypatch, code)
+    lines: list[str] = []
+    assert ssh.run(spec, ["cat", "big"], on_line=lines.append) == 0
+    assert lines == ["x" * ssh._SCAN_LINE_BYTES, "ok"]
+    assert len(capsys.readouterr().out) == 300000 + len("\nok\n")  # the output itself is whole
+
+
+def test_streamed_run_writes_text_to_a_stdout_without_bytes(tmp_path: Path, monkeypatch) -> None:
+    import io
+
+    code = "import sys; sys.stdout.buffer.write('h\\u00e9llo\\nSubmitted batch job 9\\n'.encode('utf-8'))"
+    spec = _streaming(tmp_path, monkeypatch, code)
+    out = io.StringIO()  # as under contextlib.redirect_stdout
+    monkeypatch.setattr(sys, "stdout", out)
+    lines: list[str] = []
+    assert ssh.run(spec, ["sbatch", "j.sh"], on_line=lines.append) == 0
+    assert out.getvalue() == "h\u00e9llo\nSubmitted batch job 9\n"
+    assert lines == ["h\u00e9llo", "Submitted batch job 9"]
+
+
+def test_streamed_run_without_a_stdout_still_scans(tmp_path: Path, monkeypatch) -> None:
+    spec = _streaming(tmp_path, monkeypatch, "import sys; sys.stdout.buffer.write(b'Submitted batch job 10\\n')")
+    monkeypatch.setattr(sys, "stdout", None)  # as under pythonw.exe
+    lines: list[str] = []
+    assert ssh.run(spec, ["sbatch", "j.sh"], on_line=lines.append) == 0
+    assert lines == ["Submitted batch job 10"]
+
+
+def test_streamed_run_into_a_closed_pipe_ends_like_ssh_would(tmp_path: Path, monkeypatch) -> None:
+    import io
+    import os
+
+    # The child stands in for ssh: it gives up with 141 (SIGPIPE) once its pipe is closed.
+    code = (
+        "import os, sys\n"
+        "out = sys.stdout.buffer\n"
+        "out.write(b'Submitted batch job 11\\n'); out.flush()\n"
+        "try:\n"
+        "    for _ in range(100000):\n"
+        "        out.write(b'y' * 1000 + b'\\n'); out.flush()\n"
+        "except OSError:\n"
+        "    os._exit(141)\n"
+    )
+    spec = _streaming(tmp_path, monkeypatch, code)
+    read_end, write_end = os.pipe()
+    os.close(read_end)  # as after `| head` has exited
+    broken = io.TextIOWrapper(open(write_end, "wb"), encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", broken)
+    lines: list[str] = []
+    try:
+        assert ssh.run(spec, ["cat", "big"], on_line=lines.append) == 141
+    finally:
+        monkeypatch.undo()
+        broken.close()  # fd now points at devnull, so this flush succeeds
+    assert lines[0] == "Submitted batch job 11"

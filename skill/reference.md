@@ -79,6 +79,10 @@ of a *single* job as it changes state, use `Monitor` (see
 [monitoring-jobs.md](monitoring-jobs.md)). Equivalent to
 `run -- squeue --me` + `run -- sacct`, but formatted and multi-cluster.
 
+With `--json`, each cluster entry names its `slurm_cluster`: Slurm's own
+`ClusterName`, which jobs see as `SLURM_CLUSTER_NAME` (`null` when unknown or the
+tunnel is down).
+
 ## `info` — cluster briefing
 
 ```
@@ -244,6 +248,15 @@ ctun -t <cluster> logs -j     # JSON
 Prints the timestamped list of commands sent to the cluster during the current
 session. **Only the commands are recorded — never their output.** The log is
 temporary: cleared on `logout` and on a fresh `login`. Requires a target.
+
+A command whose output had `Submitted batch job <N>` lines also shows the job
+IDs, e.g. `sbatch train.sh  → job 4818213`; in the JSON, that command carries
+`"job_ids": ["4818213"]`. Each ID is logged as soon as the line is printed, so
+`sbatch --wait` and an interrupted run keep theirs. ctun only reads the output:
+any such line counts (`run -- cat submit.log` logs the IDs in that log),
+`sbatch --parsable` prints none to find, and the ID of a job sent elsewhere with
+`sbatch -M <cluster>` belongs to that cluster. A `run --tty` logs no job IDs
+(ctun does not see its output).
 
 ## `logout` — close the tunnel
 

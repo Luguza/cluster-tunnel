@@ -481,9 +481,11 @@ def _patch_jobs(monkeypatch, *, live=True, jobs=None, error=None) -> None:
     monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: live)
 
     def fake_query(spec, user, since_minutes):
+        from cluster_tunnel.jobs import Overview
+
         if error is not None:
             raise RuntimeError(error)
-        return jobs or []
+        return Overview("haic", jobs or [])
 
     monkeypatch.setattr("cluster_tunnel.jobs.query", fake_query)
 
@@ -493,7 +495,7 @@ def test_jobs_renders_table(tmp_path: Path, monkeypatch) -> None:
 
     _cfg(tmp_path, monkeypatch)
     _patch_jobs(monkeypatch, jobs=[
-        Job("active", "966737", "RUNNING", "14:44", "7:00:00", "booster", "1", "train.sh"),
+        Job("active", "966737", "RUNNING", "14:44", "7:00:00", "booster", "1", "2026-10-13T14:02:11", "train.sh"),
     ])
     r = CliRunner().invoke(cli, ["-t", "localhost", "jobs"])
     assert r.exit_code == 0
@@ -516,16 +518,18 @@ def test_jobs_json_shape(tmp_path: Path, monkeypatch) -> None:
 
     _cfg(tmp_path, monkeypatch)
     _patch_jobs(monkeypatch, jobs=[
-        Job("done", "960652", "CANCELLED by 30927", "01:56:26", "07:00:00", "booster", "1", "r.sh"),
+        Job("done", "960652", "CANCELLED by 30927", "01:56:26", "07:00:00", "booster", "1", "2026-10-13T12:00:00", "r.sh"),
     ])
     r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "--since", "2h", "--json"])
     assert r.exit_code == 0
     payload = json.loads(r.output)
     assert payload["since_minutes"] == 120
     assert payload["clusters"][0]["cluster"] == "localhost"
+    assert payload["clusters"][0]["slurm_cluster"] == "haic"
     job = payload["clusters"][0]["jobs"][0]
     assert job["jobid"] == "960652"
     assert job["state"] == "CANCELLED by 30927"  # full raw state kept in JSON
+    assert job["start"] == "2026-10-13T12:00:00"
 
 
 def test_jobs_query_error_is_surfaced_not_fatal(tmp_path: Path, monkeypatch) -> None:
@@ -552,7 +556,7 @@ def _patch_run(monkeypatch, *, live=True, decision=None, run_rc=0) -> None:
     """Isolate `run` from real ssh: stub conn_spec/is_live/run + budget.decide."""
     monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: object())
     monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: live)
-    monkeypatch.setattr("cluster_tunnel.ssh.run", lambda spec, tokens, tty=False: run_rc)
+    monkeypatch.setattr("cluster_tunnel.ssh.run", lambda spec, tokens, tty=False, on_line=None: run_rc)
     monkeypatch.setattr("cluster_tunnel.cmdlog.record", lambda name, tokens: None)
     if decision is not None:
         monkeypatch.setattr("cluster_tunnel.budget.decide", lambda *a, **k: decision)

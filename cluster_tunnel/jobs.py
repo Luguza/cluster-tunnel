@@ -8,6 +8,7 @@ the split, and the active/finished ordering — so the CLI layer only renders.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -16,13 +17,18 @@ from cluster_tunnel.ssh import ConnSpec
 
 PACKAGE_DIR = Path(__file__).parent
 
+_SUBMITTED_JOB = re.compile(r"^Submitted batch job (\d+)", re.MULTILINE)
+
 #: The bundled probe shipped over the tunnel; universal across Slurm clusters.
 SCRIPT_PATH = PACKAGE_DIR / "scripts" / "jobs.sh"
 
 #: Number of ``|``-separated columns each data line carries. The name is last,
 #: so it is captured with ``split('|', _N_FIELDS - 1)`` and may itself contain
 #: a stray ``|`` without shifting the earlier columns.
-_N_FIELDS = 8
+_N_FIELDS = 9
+
+#: The probe's line naming the Slurm ClusterName: ``cluster|<name>``.
+_CLUSTER_PREFIX = "cluster|"
 
 
 @dataclass
@@ -36,6 +42,7 @@ class Job:
     timelimit: str
     partition: str
     nodes: str
+    start: str  # as Slurm prints it; for a pending job its estimate, or N/A
     name: str
 
     @property
@@ -44,6 +51,28 @@ class Job:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class Overview:
+    """What the probe reports for one cluster."""
+
+    #: Slurm's ``ClusterName`` (what jobs see as ``SLURM_CLUSTER_NAME``); ``None`` if unknown.
+    slurm_cluster: str | None
+    jobs: list[Job]
+
+
+def submitted_job_ids(output: str) -> list[str]:
+    """The job IDs of every ``Submitted batch job <N>`` line in ``output``."""
+    return _SUBMITTED_JOB.findall(output)
+
+
+def parse_cluster_name(lines: list[str]) -> str | None:
+    """The ClusterName from the probe's ``cluster|<name>`` line, or ``None`` without one."""
+    for line in lines:
+        if line.startswith(_CLUSTER_PREFIX):
+            return line[len(_CLUSTER_PREFIX):].strip() or None
+    return None
 
 
 def parse_line(line: str) -> Job | None:
@@ -58,10 +87,10 @@ def parse_line(line: str) -> Job | None:
     parts = line.split("|", _N_FIELDS - 1)
     if len(parts) != _N_FIELDS:
         return None
-    source, jobid, state, elapsed, timelimit, partition, nodes, name = parts
+    source, jobid, state, elapsed, timelimit, partition, nodes, start, name = parts
     if source not in ("active", "done") or not jobid:
         return None
-    return Job(source, jobid, state, elapsed, timelimit, partition, nodes, name)
+    return Job(source, jobid, state, elapsed, timelimit, partition, nodes, start, name)
 
 
 def _order(jobs: list[Job]) -> list[Job]:
@@ -87,8 +116,8 @@ def _order(jobs: list[Job]) -> list[Job]:
     return active + done
 
 
-def query(spec: ConnSpec, user: str | None, since_minutes: int) -> list[Job]:
-    """Run the probe on ``spec``'s login node and return its jobs, ordered.
+def query(spec: ConnSpec, user: str | None, since_minutes: int) -> Overview:
+    """Run the probe on ``spec``'s login node and return the ClusterName and its jobs, ordered.
 
     ``user`` may be ``None`` (or empty) to let the script resolve it remotely via
     ``id -un``. ``since_minutes`` is the finished-job history window; ``0`` skips
@@ -101,5 +130,6 @@ def query(spec: ConnSpec, user: str | None, since_minutes: int) -> list[Job]:
     if res.returncode != 0:
         detail = (res.stderr or "").strip() or f"probe exited {res.returncode}"
         raise RuntimeError(detail)
-    jobs = [job for line in res.stdout.splitlines() if (job := parse_line(line))]
-    return _order(jobs)
+    lines = res.stdout.splitlines()
+    jobs = [job for line in lines if (job := parse_line(line))]
+    return Overview(parse_cluster_name(lines), _order(jobs))

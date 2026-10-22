@@ -10,11 +10,14 @@ builders below are the same on every platform, and :func:`wsl.launch` adds the
 
 from __future__ import annotations
 
+import codecs
+import os
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePath, PurePosixPath
-from typing import IO, Optional
+from typing import IO, Callable, Optional
 
 from cluster_tunnel import config as config_mod
 from cluster_tunnel import constants, paths, wsl
@@ -329,13 +332,94 @@ def is_live(spec: ConnSpec) -> bool:
     return check(spec).returncode == 0
 
 
-def run(spec: ConnSpec, tokens: list[str], *, tty: bool = False) -> int:
-    """Run a command over the live tunnel, streaming I/O; return remote exit code."""
-    argv = ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes"]
-    if tty:
-        argv.append("-tt")
-    argv += [spec.target, shlex.join(tokens)]
-    return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
+def _command_argv(spec: ConnSpec, remote: str, *, tty: bool = False) -> list[str]:
+    """The ssh argv that runs the shell command line ``remote`` over the live tunnel."""
+    return ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", *(["-tt"] if tty else []), spec.target, remote]
+
+
+def run(
+    spec: ConnSpec,
+    tokens: list[str],
+    *,
+    tty: bool = False,
+    on_line: Optional[Callable[[str], None]] = None,
+) -> int:
+    """Run a command over the live tunnel, streaming I/O; return remote exit code.
+
+    With ``on_line`` (and no ``tty``), stdout passes through this process on its
+    way to ours, and ``on_line`` sees each of its lines as it arrives (the first
+    :data:`_SCAN_LINE_BYTES` of a longer one); nothing else of the output is
+    kept. stdin and stderr always go straight to ssh.
+    """
+    argv = wsl.launch(_command_argv(spec, shlex.join(tokens), tty=tty), spec.wsl_distro)
+    if tty or on_line is None:
+        return subprocess.run(argv).returncode
+    return _run_scanning(argv, on_line)
+
+
+#: How much of each streamed line :func:`run` hands to ``on_line``, so a huge
+#: line without a newline can't fill the memory.
+_SCAN_LINE_BYTES = 4096
+
+
+def _run_scanning(argv: list[str], on_line: Callable[[str], None]) -> int:
+    write = _stdout_writer()
+    pending = b""
+    with subprocess.Popen(argv, stdout=subprocess.PIPE) as proc:
+        assert proc.stdout is not None
+        while chunk := proc.stdout.read1(65536):
+            *lines, pending = (pending + chunk).split(b"\n")
+            for line in lines:
+                on_line(line[:_SCAN_LINE_BYTES].decode("utf-8", "replace"))
+            pending = pending[:_SCAN_LINE_BYTES]
+            if write is None:
+                continue
+            try:
+                write(chunk)
+            except OSError:
+                # Our stdout's reader is gone (`| head`): stop copying and close the
+                # pipe, so ssh meets the closed pipe at its next write, as without ctun.
+                _silence_stdout()
+                break
+        else:
+            if pending:
+                on_line(pending.decode("utf-8", "replace"))
+        proc.stdout.close()
+        return proc.wait()
+
+
+def _stdout_writer() -> Optional[Callable[[bytes], None]]:
+    """Writes streamed output to ``sys.stdout``: its bytes, or text when it has none; ``None`` without one."""
+    stream = sys.stdout
+    if stream is None:  # pythonw.exe
+        return None
+    stream.flush()
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+
+        def write_bytes(chunk: bytes) -> None:
+            buffer.write(chunk)
+            buffer.flush()
+
+        return write_bytes
+    # A text-only stand-in, e.g. `contextlib.redirect_stdout(io.StringIO())`.
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+
+    def write_text(chunk: bytes) -> None:
+        stream.write(decoder.decode(chunk))
+        stream.flush()
+
+    return write_text
+
+
+def _silence_stdout() -> None:
+    """Point a broken stdout at devnull, so Python's flush at exit doesn't fail on it."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except (AttributeError, OSError, ValueError):
+        pass  # a stand-in without a file descriptor has nothing to flush at exit
 
 
 def capture(
@@ -346,11 +430,7 @@ def capture(
     After ``timeout`` seconds the local ssh is stopped and exit code 124 comes
     back; the remote command may keep running on the cluster.
     """
-    return captured(
-        spec,
-        ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)],
-        timeout=timeout,
-    )
+    return captured(spec, _command_argv(spec, shlex.join(tokens)), timeout=timeout)
 
 
 def close(spec: ConnSpec) -> bool:
@@ -375,7 +455,7 @@ def feed_script(
     with open(script_path, "rb") as fh:
         return captured(
             spec,
-            ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote],
+            _command_argv(spec, remote),
             stdin=fh,
             timeout=timeout,
         )

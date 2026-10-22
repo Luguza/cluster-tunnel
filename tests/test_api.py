@@ -10,7 +10,7 @@ import pytest
 from cluster_tunnel import api, cmdlog, paths, popup, session, ssh, wsl
 from cluster_tunnel.budget import Decision
 from cluster_tunnel.constants import ExitCode
-from cluster_tunnel.jobs import Job
+from cluster_tunnel.jobs import Job, Overview
 
 GUARDED = (
     "clusters:\n"
@@ -116,7 +116,7 @@ def test_run_order_preflight_hook_log_then_command(cfg: Path, monkeypatch) -> No
     decision = Decision(True, "within budget: 1.0 < 3.0 jobh", 1.0, 3.0, "jobh")
     calls = _decide(monkeypatch, decision)
     monkeypatch.setattr(cmdlog, "record", lambda name, tokens: events.append(("record", name, tokens)))
-    monkeypatch.setattr(ssh, "run", lambda spec, tokens, tty=False: events.append(("run", tokens, tty)) or 7)
+    monkeypatch.setattr(ssh, "run", lambda spec, tokens, tty=False, on_line=None: events.append(("run", tokens, tty)) or 7)
 
     result = api.run("c", ("sbatch", "j.sh"), on_preflight=lambda d: events.append(("hook", d)))
     assert result == api.Result(7, None, None) and not result.ok
@@ -337,10 +337,11 @@ def test_status_probes_usage_only_when_asked(cfg: Path, monkeypatch) -> None:
 
 def test_jobs_returns_typed_jobs(cfg: Path, monkeypatch) -> None:
     _live(monkeypatch)
-    job = Job("active", "42", "RUNNING", "0:05", "1:00:00", "cpu", "1", "run.sh")
-    monkeypatch.setattr("cluster_tunnel.jobs.query", lambda spec, user, since: [job])
+    job = Job("active", "42", "RUNNING", "0:05", "1:00:00", "cpu", "1", "N/A", "run.sh")
+    monkeypatch.setattr("cluster_tunnel.jobs.query", lambda spec, user, since: Overview("haic", [job]))
     [entry] = api.jobs("c", since_minutes=0)
     assert entry.jobs == [job] and entry.live and entry.error is None
+    assert entry.slurm_cluster == "haic" and entry.as_dict()["slurm_cluster"] == "haic"
     assert entry.as_dict()["jobs"] == [job.as_dict()]
 
 

@@ -5,6 +5,28 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Each job's start time.** `ctun jobs --json` and `api.jobs()` report a job's
+  `start` as Slurm prints it: when it started, or for a pending job Slurm's
+  estimate (`N/A` while it has none).
+- **Each cluster's Slurm name.** `ctun jobs --json` and `api.jobs()` name each
+  cluster's Slurm `ClusterName` in `slurm_cluster`, the value jobs see as
+  `SLURM_CLUSTER_NAME` (`null` when unknown), so a front end can match a job to
+  tags like `slurm:<ClusterName>:<job id>`.
+- **The job IDs a command submitted.** The command log keeps the IDs of the jobs
+  each `ctun run` submitted (every `Submitted batch job <N>` line of its output).
+  `ctun logs` shows them after the command (`→ job 4818213`), `ctun logs --json`
+  gives them as `job_ids`, and `api.run()` returns them in `Result.job_ids`. The
+  output still streams as it arrives, and each ID is logged as soon as it is
+  printed, so `sbatch --wait` and an interrupted run keep theirs. Any such line
+  counts, so `run -- cat submit.log` logs the old IDs in it; `sbatch --parsable`
+  prints none, and the ID of a `sbatch -M <other>` job belongs to that cluster,
+  not to `slurm_cluster`. A `--tty` run logs none: ctun does not see its output.
+  Older logs still read.
+
 ## [0.8.0] - 2026-10-20
 
 ### Added

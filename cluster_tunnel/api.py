@@ -93,6 +93,9 @@ class Result:
     exit_code: int
     stdout: Optional[str] = None
     stderr: Optional[str] = None
+    #: The IDs of every ``Submitted batch job <N>`` line a :func:`run` printed; empty with ``tty``.
+    #: Any such line counts (also one ``cat`` printed); ``sbatch --parsable`` prints none.
+    job_ids: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -126,11 +129,14 @@ class ClusterJobs:
     live: bool
     error: Optional[str] = None
     jobs: list[Job] = field(default_factory=list)
+    #: Slurm's ``ClusterName``, which jobs see as ``SLURM_CLUSTER_NAME``; ``None`` if unknown.
+    slurm_cluster: Optional[str] = None
 
     def as_dict(self) -> dict:
         """The entry as ``ctun jobs --json`` prints it."""
         return {
             "cluster": self.cluster,
+            "slurm_cluster": self.slurm_cluster,
             "live": self.live,
             "error": self.error,
             "jobs": [job.as_dict() for job in self.jobs],
@@ -572,7 +578,9 @@ def run(
     The output streams to this process's stdout and stderr, or, with
     ``capture``, comes back in the :class:`Result`; ``tty`` needs streaming.
     ``timeout`` (seconds, captured output only) stops waiting with exit code
-    124; the remote command may keep running on the cluster.
+    124; the remote command may keep running on the cluster. The IDs of the
+    jobs the command submitted go into the :class:`Result` and the command log;
+    with ``tty`` ctun doesn't see the output, so there are none.
     """
     if capture and tty:
         raise ValueError("a TTY needs streamed output; pass capture=False")
@@ -585,11 +593,26 @@ def run(
     if on_preflight is not None:
         on_preflight(decision)
     # Log the command (not its output) so `status` can show activity.
-    cmdlog.record(cluster, tokens)
+    entry_id = cmdlog.record(cluster, tokens)
+    if tty:
+        return Result(ssh.run(spec, tokens, tty=True))
+    job_ids: list[str] = []
+
+    def submitted(output: str) -> None:
+        # Log each ID once it is printed: an interrupted run, or one that waits
+        # for its job (`sbatch --wait`), still shows what it submitted.
+        for job_id in jobs_mod.submitted_job_ids(output):
+            job_ids.append(job_id)
+            cmdlog.record_jobs(cluster, entry_id, [job_id])
+
     if capture:
         res = ssh.capture(spec, tokens, timeout=timeout)
-        return Result(res.returncode, res.stdout, res.stderr)
-    return Result(ssh.run(spec, tokens, tty=tty))
+        result = Result(res.returncode, res.stdout, res.stderr)
+        submitted(res.stdout or "")
+    else:
+        result = Result(ssh.run(spec, tokens, on_line=submitted))
+    result.job_ids = job_ids
+    return result
 
 
 def feed_script(
@@ -683,7 +706,9 @@ def jobs(
         item = ClusterJobs(name, ssh.is_live(spec))
         if item.live:
             try:
-                item.jobs = jobs_mod.query(spec, entry.user, since_minutes)
+                overview = jobs_mod.query(spec, entry.user, since_minutes)
+                item.slurm_cluster = overview.slurm_cluster
+                item.jobs = overview.jobs
             except Exception as exc:  # noqa: BLE001 — surface, don't abort the sweep
                 item.error = str(exc)
         results.append(item)
