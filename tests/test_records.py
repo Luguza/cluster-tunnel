@@ -601,9 +601,11 @@ def test_projects_list_marks_a_cluster_without_records(tmp_path: Path, monkeypat
     config = _cfg(tmp_path, monkeypatch)
     config.write_text("clusters:\n  localhost:\n    host: localhost\n    job_records: false\n", encoding="utf-8")
     _patch_job(monkeypatch, FakeCluster())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: (_ for _ in ()).throw(AssertionError))
     r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "list", "--json"])
     (entry,) = json.loads(r.stdout)["clusters"]
     assert entry["job_records"] is False and entry["error"] is None and entry["projects"] == []
+    assert entry["live"] is None  # not checked: the cluster is skipped anyway
 
 
 # --- renaming a project (ctun projects rename) ------------------------------------

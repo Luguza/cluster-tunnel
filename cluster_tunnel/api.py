@@ -202,7 +202,7 @@ class ClusterProjects:
     """One cluster's projects, as ``ctun projects list`` reports them."""
 
     cluster: str
-    live: bool
+    live: Optional[bool]  # None: not checked, as the cluster keeps no records
     job_records: bool  # false: the cluster keeps no records, so it was skipped
     error: Optional[str] = None
     #: ``{"project", "jobs"}`` per project, by name; jobs without a project are not counted.
@@ -218,7 +218,7 @@ class ProjectRename:
     """What :func:`rename_project` changed on one cluster."""
 
     cluster: str
-    live: bool
+    live: Optional[bool]  # None: not checked, as the cluster keeps no records
     job_records: bool  # false: the cluster keeps no records, so it was skipped
     error: Optional[str] = None
     #: The IDs of the jobs whose record was renamed, also those stored before an ``error``.
@@ -996,8 +996,9 @@ def _record_clusters(config: Config, cluster: Optional[str], result_type: type):
     for name in _names(config, cluster):
         spec = ssh.conn_spec(config, name)
         keeps_records = config.clusters[name].job_records
-        item = result_type(name, ssh.is_live(spec), keeps_records)
-        yield (spec if item.live and keeps_records else None), item
+        # A cluster without records is skipped, so its tunnel needn't be checked.
+        item = result_type(name, ssh.is_live(spec) if keeps_records else None, keeps_records)
+        yield (spec if item.live else None), item
 
 
 def _path_arg(config_path: Optional[PathLike]) -> Optional[str]:

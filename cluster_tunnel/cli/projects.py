@@ -5,6 +5,7 @@ from __future__ import annotations
 import rich_click as click
 
 from cluster_tunnel.cli.errors import fail
+from cluster_tunnel.cli.jobs import _JSON_OPTION
 
 
 class ProjectsCommandsMixin:
@@ -16,7 +17,7 @@ class ProjectsCommandsMixin:
 
     @projects_command.command("list")
     @click.pass_obj
-    @click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
+    @_JSON_OPTION
     def projects_list_command(self, as_json: bool) -> None:
         """List every project in the job records, with its number of jobs.
 
@@ -47,7 +48,7 @@ class ProjectsCommandsMixin:
     @click.pass_obj
     @click.argument("old")
     @click.argument("new")
-    @click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
+    @_JSON_OPTION
     def projects_rename_command(self, old: str, new: str, as_json: bool) -> None:
         """Rename project OLD to NEW in every job record, with the projects nested in it.
 

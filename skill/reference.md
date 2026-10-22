@@ -131,7 +131,8 @@ reported, never logged in to.
 
 `--json` prints `{"clusters": [{cluster, live, job_records, error, projects}]}`,
 where `projects` is `[{project, jobs}]` sorted by name. `job_records` is false
-for a cluster configured without records, which is skipped. `error` is set when
+for a cluster configured without records, which is skipped (its `live` is
+`null`: not checked). `error` is set when
 the records could not be read.
 
 ## `projects rename` — rename a project in every job record
