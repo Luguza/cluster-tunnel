@@ -116,6 +116,12 @@ def projects(records: list[JobRecord]) -> list[dict[str, Any]]:
     return [{"project": project, "jobs": counts[project]} for project in sorted(counts)]
 
 
+def project_name(name: str) -> str:
+    """``name`` as a project is stored: ``/`` nests, so no ``/`` or blanks at either end
+    of a level, and no empty level (`` archive//htfm/ `` is ``archive/htfm``)."""
+    return "/".join(level.strip() for level in name.split("/") if level.strip())
+
+
 def renamed_project(project: Optional[str], old: str, new: str) -> Optional[str]:
     """``project`` once ``old`` is renamed to ``new``, with the projects nested in ``old``; ``None`` if it is neither."""
     if project == old:

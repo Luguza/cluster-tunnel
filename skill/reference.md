@@ -143,7 +143,8 @@ ctun -t <cluster> projects rename htfm eval -j     # one cluster, JSON
 
 Gives every job of project OLD the project NEW, and the projects nested in OLD
 along with it: `htfm/mh` becomes `archive/htfm/mh`. If NEW already exists, the
-jobs join it. Each change is logged in the record's `changes`, as with
+jobs join it. Both names lose a `/` or blanks at either end (`archive/` is
+`archive`), as every project name does when it is stored. Each change is logged in the record's `changes`, as with
 `jobs edit`. A down cluster keeps OLD; log in and run the command again, which
 is safe to repeat.
 

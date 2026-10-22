@@ -577,7 +577,33 @@ def test_projects_rename_refuses_an_empty_name(tmp_path: Path, monkeypatch) -> N
     _cfg(tmp_path, monkeypatch)
     _patch_job(monkeypatch, FakeCluster())
     r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "htfm", "/"])
-    assert r.exit_code == 2 and "NEW is empty" in r.output
+    assert r.exit_code == 2 and "the new project name is empty" in _norm(r)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "", "x"])
+    assert r.exit_code == 2 and "the project to rename is empty" in _norm(r)
+
+
+def test_project_names_lose_stray_slashes_and_blanks() -> None:
+    assert records.project_name(" archive//htfm/ ") == "archive/htfm"
+    assert records.project_name("a / b") == "a/b"
+    assert records.project_name("/") == ""
+
+
+def test_projects_rename_takes_the_names_as_stored(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}, "8": {"job_id": "8", "project": "htfm/mh"}}
+    _patch_job(monkeypatch, cluster)
+    [entry] = api.rename_project("htfm/", "archive/", "localhost")
+    assert entry.renamed == ["7", "8"]
+    assert [record["project"] for record in cluster.written.values()] == ["archive", "archive/mh"]
+
+
+def test_run_and_edit_store_the_project_name_as_stored(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    _patch_run(monkeypatch, cluster, "Submitted batch job 7\n")
+    assert api.run("localhost", ["sbatch", "x"], project="htfm//mh/").records[0].project == "htfm/mh"
+    assert api.edit_job("localhost", "7", project=" eval/ ").record["project"] == "eval"
 
 
 def test_projects_rename_skips_a_down_tunnel(tmp_path: Path, monkeypatch) -> None:

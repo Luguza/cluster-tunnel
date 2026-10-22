@@ -673,6 +673,8 @@ def run(
     """
     if capture and tty:
         raise ValueError("a TTY needs streamed output; pass capture=False")
+    if project:
+        project = records_mod.project_name(project) or None
     if timeout is not None and not capture:
         raise ValueError("a timeout needs captured output; pass capture=True")
     tokens = _tokens(command)
@@ -853,6 +855,8 @@ def edit_job(
     """
     if not records_mod.is_job_id(job_id):
         raise RecordError(f"'{job_id}' is not a Slurm job ID (like 51319, or 51319_4 for an array task).")
+    if project is not None:
+        project = records_mod.project_name(project)
     config, _ = _load(config, config_path)
     spec = _spec(config, cluster)
     if not ssh.is_live(spec):
@@ -921,10 +925,14 @@ def rename_project(
     :func:`edit_job`, and the records go back to the cluster a few dozen per
     SSH call. Works on ``cluster``, or on every configured cluster with a live
     tunnel; a down cluster keeps ``old``, so call it again once it is logged in,
-    which is safe. Raises ``ValueError`` for an empty ``new``.
+    which is safe. Both names are taken as :func:`records.project_name` stores
+    them; ``ValueError`` if either is empty then.
     """
-    if not new.strip("/"):
-        raise ValueError("the new project name is empty")
+    old, new = records_mod.project_name(old), records_mod.project_name(new)
+    if not old:
+        raise ValueError("the project to rename is empty")
+    if not new:
+        raise ValueError('the new project name is empty; to clear a project, use `jobs edit --project ""`')
     config, _ = _load(config, config_path)
     results: list[ProjectRename] = []
     for spec, item in _record_clusters(config, cluster, ProjectRename):

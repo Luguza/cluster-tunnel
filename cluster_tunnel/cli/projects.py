@@ -61,17 +61,14 @@ class ProjectsCommandsMixin:
         """
         from cluster_tunnel import api
 
-        if not new.strip("/"):
-            raise click.UsageError('NEW is empty; to clear a project use `jobs edit --project ""`.')
         config = self.load_config()
         if self.target:
             self.resolve_cluster(config)  # validate the target
-        results = [
-            entry.as_dict()
-            for entry in api.rename_project(
-                old, new, self.target or None, config=config, config_path=self.config_path
-            )
-        ]
+        try:
+            renames = api.rename_project(old, new, self.target or None, config=config, config_path=self.config_path)
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from None
+        results = [entry.as_dict() for entry in renames]
 
         if as_json:
             import json
