@@ -511,8 +511,8 @@ def _bridge_logged_in(cluster: str, spec: ConnSpec, default_limit: Optional[floa
         raise LoginError(f"Login to '{cluster}' through the login bridge failed{detail}", cluster)
     if not ssh.is_live(spec):
         raise LoginError(
-            f"The login bridge reported a live tunnel to '{cluster}', but there is none;"
-            f" the front end has to log in with this config: {path}",
+            f"The login bridge reported a live tunnel to '{cluster}', but there is none."
+            " Did the front end log in with the config file the request named?",
             cluster,
         )
     return True
