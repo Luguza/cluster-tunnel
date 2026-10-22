@@ -40,11 +40,14 @@ class Outcome:
     message: str = ""
 
 
-def log_in(cluster_name: str, default_limit: Optional[float], *, timeout: float) -> Outcome:
+def log_in(cluster_name: str, default_limit: Optional[float], *, config: str, timeout: float) -> Outcome:
     """Ask the front end to log in to ``cluster_name`` and wait for its outcome.
 
-    The request is one line of JSON, ``{"cluster", "session_limit"}``; the reply
-    one line ``{"status", "message"}`` with a status of :data:`STATUSES`.
+    The request is one line of JSON, ``{"cluster", "session_limit", "config",
+    "timeout"}``: the front end logs in with
+    ``ctun --config <config> -t <cluster> login --credentials-stdin``, so it uses
+    the caller's config file, not its own. The reply is one line
+    ``{"status", "message"}`` with a status of :data:`STATUSES`.
     Raises :class:`Unavailable` when no front end is named or it can't be
     reached, and when it declines: it closes without a reply, or replies with
     anything else (``{"status": "declined"}``, say), so the popup opens instead.
@@ -54,7 +57,8 @@ def log_in(cluster_name: str, default_limit: Optional[float], *, timeout: float)
     address = os.environ.get(BRIDGE_VARIABLE)
     if not address:
         raise Unavailable
-    request = json.dumps({"cluster": cluster_name, "session_limit": default_limit}).encode("utf-8") + b"\n"
+    fields = {"cluster": cluster_name, "session_limit": default_limit, "config": config, "timeout": timeout}
+    request = json.dumps(fields).encode("utf-8") + b"\n"
     try:
         reply = _exchange(address, request, timeout)
     except TimeoutError:

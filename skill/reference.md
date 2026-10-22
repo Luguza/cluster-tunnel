@@ -210,8 +210,8 @@ ctun -t <cluster> login [-i|--interactive | --credentials-stdin] [-l|--limit N] 
   **never exposed to the agent**. Use this whenever you (an agent) trigger a
   login. `--timeout S` bounds the wait (default 120s). When a front end started
   you (a VS Code window with the ctun extension), it asks in its own input boxes
-  instead (found through `CTUN_LOGIN_BRIDGE`); if the human cancels, the login
-  fails with "Login cancelled."
+  instead (found through `CTUN_LOGIN_BRIDGE`), within the same `--timeout`; if
+  the human cancels, the login fails with "Login cancelled."
 - `--credentials-stdin`: for front ends that ask the human themselves (the VS
   Code extension): read `{"password": ..., "otp": ..., "limit": ...}` as JSON on
   stdin, then log in like `-i`. `limit` is optional. **Agents never use this**:
