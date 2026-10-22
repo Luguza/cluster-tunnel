@@ -9,7 +9,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from cluster_tunnel import api, facts, jobs, notes, records
+from cluster_tunnel import api, jobs, notes, records
 from cluster_tunnel.cli import cli
 from cluster_tunnel.constants import ExitCode
 from tests.test_cli import _cfg, _norm, _patch_jobs
@@ -26,7 +26,7 @@ FACTS_OUTPUT = (
 
 
 class FakeCluster:
-    """Answers `feed_script` for facts.sh and records.sh like a cluster would."""
+    """Answers `feed_script` for records.sh like a cluster would."""
 
     def __init__(self, facts_rc: int = 0, known_refs: tuple[str, ...] = ()) -> None:
         self.facts_rc = facts_rc
@@ -35,14 +35,15 @@ class FakeCluster:
         self.note_checks: list[list] = []
 
     def feed_script(self, spec, script_path: Path, args: list, timeout=None) -> subprocess.CompletedProcess:
-        if script_path == notes.SCRIPT_PATH:
-            self.note_checks.append(args)
+        assert script_path == records.SCRIPT_PATH
+        command, *rest = args
+        if command == "refs":
+            self.note_checks.append(rest)
             return subprocess.CompletedProcess([], 0, "\n".join(self.known_refs), "")
-        if script_path == facts.SCRIPT_PATH:
+        if command == "facts":
             if self.facts_rc:
                 return subprocess.CompletedProcess([], self.facts_rc, "", "squeue: not found")
             return subprocess.CompletedProcess([], 0, FACTS_OUTPUT, "")
-        command, *rest = args
         if command in ("write", "update"):
             job_id, payload = rest
             self.written[job_id] = json.loads(base64.b64decode(payload))

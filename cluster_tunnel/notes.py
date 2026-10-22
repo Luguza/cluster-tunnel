@@ -8,13 +8,10 @@ note that points at something that does not exist.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Optional
 
 from cluster_tunnel import records, ssh
 from cluster_tunnel.ssh import ConnSpec
-
-SCRIPT_PATH = Path(__file__).parent / "scripts" / "note_refs.sh"
 
 _REFERENCE = re.compile(r"\b(?:commit:[0-9a-fA-F]{7,40}|job:\d+(?:_\d+)?)\b")
 
@@ -37,10 +34,9 @@ def unknown_references(spec: ConnSpec, note: str, project: Optional[str]) -> lis
     repos: list[str] = []
     if any(ref.startswith("commit:") for ref in refs):
         repos = _record_repos(spec, project)
-    res = ssh.feed_script(spec, SCRIPT_PATH, [*repos, "--", *refs])
+    res = records.call(spec, ["refs", *repos, "--", *refs])
     if res.returncode != 0:
-        detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
-        raise RuntimeError(f"could not check the note's references: {detail}")
+        raise RuntimeError(f"could not check the note's references: {ssh.failure(res)}")
     found = set(res.stdout.split())
     return [ref for ref in refs if ref not in found]
 

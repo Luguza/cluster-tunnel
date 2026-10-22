@@ -1,25 +1,22 @@
 """Facts about a just-submitted job, collected by ctun on the cluster (never by the agent).
 
-``facts.sh`` runs on the login node over the tunnel and reports the job's
-Slurm cluster, name and working directory, and the state of the git repo in
-that directory: what code the job will run, as of submit time.
+``records.sh facts`` runs on the login node over the tunnel and reports the
+job's Slurm cluster, name and working directory, and the state of the git repo
+in that directory: what code the job will run, as of submit time.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
-from cluster_tunnel import ssh
+from cluster_tunnel import records, ssh
 from cluster_tunnel.ssh import ConnSpec
-
-SCRIPT_PATH = Path(__file__).parent / "scripts" / "facts.sh"
 
 
 @dataclass
 class JobFacts:
-    """What ``facts.sh`` found; ``None`` means the fact is unknown."""
+    """What ``records.sh facts`` found; ``None`` means the fact is unknown."""
 
     slurm_cluster: Optional[str] = None
     job_name: Optional[str] = None
@@ -33,7 +30,7 @@ class JobFacts:
 
 
 def parse(output: str) -> JobFacts:
-    """Parse ``facts.sh``'s ``key=value`` lines; unknown keys are ignored."""
+    """Parse the ``key=value`` lines of ``records.sh facts``; unknown keys are ignored."""
     facts = JobFacts()
     dirty: list[str] = []
     for line in output.splitlines():
@@ -52,12 +49,11 @@ def parse(output: str) -> JobFacts:
 
 
 def collect(spec: ConnSpec, job_id: str) -> JobFacts:
-    """Run ``facts.sh`` for ``job_id``; a failure leaves every fact unknown, with a warning."""
-    res = ssh.feed_script(spec, SCRIPT_PATH, [job_id])
+    """Collect the facts of ``job_id``; a failure leaves every fact unknown, with a warning."""
+    res = records.call(spec, ["facts", job_id])
     facts = parse(res.stdout or "")
     if res.returncode != 0:
-        detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
-        facts.warnings.append(f"could not collect the facts of job {job_id}: {detail}")
+        facts.warnings.append(f"could not collect the facts of job {job_id}: {ssh.failure(res)}")
     for name in ("slurm_cluster", "workdir", "commit"):
         if getattr(facts, name) is None and res.returncode == 0:
             facts.warnings.append(f"job {job_id}: {name} unknown")

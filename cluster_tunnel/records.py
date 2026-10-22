@@ -7,7 +7,9 @@ edit`` changes the project and the note later, and logs each change in the recor
 facts are never changed. For a job that has no record (e.g. one submitted
 with plain ``sbatch``), ``ctun jobs edit`` creates one without facts. ``records.sh``
 keeps them in ``~/.ctun/jobs/<ClusterName>/<job id>.json`` on the cluster, so
-every machine that works there sees the same records.
+every machine that works there sees the same records. It also collects a job's
+facts (:mod:`cluster_tunnel.facts`) and checks a note's references
+(:mod:`cluster_tunnel.notes`) there; :func:`call` runs it.
 """
 
 from __future__ import annotations
@@ -15,14 +17,17 @@ from __future__ import annotations
 import base64
 import json
 import socket
+import subprocess
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from cluster_tunnel import ssh
-from cluster_tunnel.facts import JobFacts
 from cluster_tunnel.ssh import ConnSpec
+
+if TYPE_CHECKING:
+    from cluster_tunnel.facts import JobFacts
 
 SCRIPT_PATH = Path(__file__).parent / "scripts" / "records.sh"
 
@@ -145,23 +150,26 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def call(spec: ConnSpec, args: list[object]) -> subprocess.CompletedProcess:
+    """Run ``records.sh`` with ``args`` (a command and its arguments) on the cluster."""
+    return ssh.feed_script(spec, SCRIPT_PATH, args)
+
+
 def write(spec: ConnSpec, record: JobRecord) -> None:
     """Store ``record`` on the cluster; raises :class:`RuntimeError` if that fails."""
     payload = base64.b64encode(record.to_json().encode("utf-8")).decode("ascii")
-    res = ssh.feed_script(spec, SCRIPT_PATH, ["write", record.job_id, payload])
+    res = call(spec, ["write", record.job_id, payload])
     if res.returncode != 0:
-        detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
-        raise RuntimeError(f"could not write the record of job {record.job_id}: {detail}")
+        raise RuntimeError(f"could not write the record of job {record.job_id}: {ssh.failure(res)}")
 
 
 def update(spec: ConnSpec, record: dict[str, Any]) -> None:
     """Store the raw ``record`` on the cluster in place of the job's current one, or as its first."""
     document = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
     payload = base64.b64encode(document.encode("utf-8")).decode("ascii")
-    res = ssh.feed_script(spec, SCRIPT_PATH, ["update", record["job_id"], payload])
+    res = call(spec, ["update", record["job_id"], payload])
     if res.returncode != 0:
-        detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
-        raise RuntimeError(f"could not store the record of job {record['job_id']}: {detail}")
+        raise RuntimeError(f"could not store the record of job {record['job_id']}: {ssh.failure(res)}")
 
 
 def read(spec: ConnSpec, job_id: str) -> Optional[dict[str, Any]]:
@@ -191,10 +199,9 @@ def _read(spec: ConnSpec, args: list[object]) -> list[JobRecord]:
 
 
 def _read_raw(spec: ConnSpec, args: list[object]) -> list[dict[str, Any]]:
-    res = ssh.feed_script(spec, SCRIPT_PATH, args)
+    res = call(spec, args)
     if res.returncode != 0:
-        detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
-        raise RuntimeError(f"could not read the job records: {detail}")
+        raise RuntimeError(f"could not read the job records: {ssh.failure(res)}")
     documents = []
     for line in res.stdout.splitlines():
         if not line.strip():

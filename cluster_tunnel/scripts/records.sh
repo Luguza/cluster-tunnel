@@ -14,17 +14,24 @@
 #                                  <since_minutes> minutes (0 = none) and those of
 #                                  the given jobs, one JSON document per line
 #   all                            print every record, one per line
+#   facts <job_id>                 print the facts of a just-submitted job (below)
+#   refs <repo>... -- <reference>...
+#                                  print each note reference that exists (below)
 #
-# Only records go to stdout; diagnostics go to stderr.
+# Only records and facts go to stdout; diagnostics go to stderr.
 set -u
 export LC_ALL=C
 
+# Slurm's own name for this cluster; empty when scontrol cannot tell.
 cluster="$(scontrol show config 2>/dev/null | sed -n 's/^ClusterName *= *//p' | head -n 1)"
-if [ -z "$cluster" ]; then
-    echo "cannot read the Slurm ClusterName (scontrol show config)" >&2
-    exit 3
-fi
 dir="$HOME/.ctun/jobs/$cluster"
+
+need_store() {
+    if [ -z "$cluster" ]; then
+        echo "cannot read the Slurm ClusterName (scontrol show config)" >&2
+        exit 3
+    fi
+}
 
 print_record() {
     # Records are one line of JSON; make sure each ends its own line.
@@ -32,9 +39,6 @@ print_record() {
     [ -n "$(tail -c 1 "$1")" ] && echo
     return 0
 }
-
-command="${1:-}"
-shift || true
 
 # Decodes the base64 record $2 of job $1 into a temp file next to its target and
 # prints the temp file's path, so the final `mv` is atomic.
@@ -50,8 +54,86 @@ decode_to_temp() {
     echo "$tmp"
 }
 
+# facts <job_id>: `key=value` lines; a fact it cannot read is left out, so the
+# caller records it as unknown:
+#
+#   slurm_cluster=<ClusterName from slurm.conf>
+#   job_name=<job name>
+#   workdir=<the job's working directory>
+#   commit=<HEAD of the git repo in workdir>
+#   branch=<its branch, or HEAD when detached>
+#   pushed=yes|no            (HEAD is on a remote-tracking branch, as of the last fetch)
+#   dirty=<porcelain line>   (one per uncommitted file)
+#
+# The git facts describe the repo when this runs, after the submitting command
+# finished; that is submit time unless the command changed the repo after sbatch.
+facts() {
+    local job_id="$1" name workdir
+    [ -n "$cluster" ] && echo "slurm_cluster=$cluster"
+    # squeue first: a job submitted a moment ago is almost always still queued.
+    name="$(squeue -h -j "$job_id" -o '%j' 2>/dev/null | head -n 1)"
+    workdir="$(squeue -h -j "$job_id" -o '%Z' 2>/dev/null | head -n 1)"
+    if [ -z "$workdir" ]; then
+        name="$(sacct -n -X -P -j "$job_id" -o JobName 2>/dev/null | head -n 1)"
+        workdir="$(sacct -n -X -P -j "$job_id" -o WorkDir 2>/dev/null | head -n 1)"
+    fi
+    [ -n "$name" ] && echo "job_name=$name"
+    [ -n "$workdir" ] || return 0
+    echo "workdir=$workdir"
+
+    git -C "$workdir" rev-parse --git-dir >/dev/null 2>&1 || return 0
+    echo "commit=$(git -C "$workdir" rev-parse HEAD)"
+    echo "branch=$(git -C "$workdir" rev-parse --abbrev-ref HEAD)"
+    if [ -n "$(git -C "$workdir" branch -r --contains HEAD 2>/dev/null)" ]; then
+        echo "pushed=yes"
+    else
+        echo "pushed=no"
+    fi
+    git -C "$workdir" status --porcelain 2>/dev/null | sed 's/^/dirty=/'
+}
+
+# refs <repo>... -- <reference>...: prints each reference it can find, one per
+# line; the caller treats every other one as unknown.
+#
+#   job:<id>       known to squeue or sacct, or has a ctun job record
+#   commit:<hash>  a commit in one of the given git repos
+refs() {
+    local repos=() ref
+    while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+        repos+=("$1")
+        shift
+    done
+    shift || true
+
+    job_exists() {
+        [ -n "$(squeue -h -j "$1" -o '%i' 2>/dev/null)" ] && return 0
+        [ -n "$(sacct -n -X -P -j "$1" -o JobID 2>/dev/null)" ] && return 0
+        [ -n "$cluster" ] && [ -f "$dir/$1.json" ]
+    }
+
+    commit_exists() {
+        local repo
+        for repo in "${repos[@]}"; do
+            git -C "$repo" cat-file -e "$1^{commit}" 2>/dev/null && return 0
+        done
+        return 1
+    }
+
+    for ref in "$@"; do
+        case "$ref" in
+            job:*) job_exists "${ref#job:}" && echo "$ref" ;;
+            commit:*) commit_exists "${ref#commit:}" && echo "$ref" ;;
+        esac
+    done
+    return 0
+}
+
+command="${1:-}"
+shift || true
+
 case "$command" in
     write)
+        need_store
         job_id="${1:?job id required}"
         payload="${2:?record required}"
         target="$dir/$job_id.json"
@@ -69,12 +151,14 @@ case "$command" in
         fi
         ;;
     update)
+        need_store
         job_id="${1:?job id required}"
         payload="${2:?record required}"
         tmp="$(decode_to_temp "$job_id" "$payload")" || exit 5
         mv -f "$tmp" "$dir/$job_id.json"
         ;;
     list)
+        need_store
         since_min="${1:-0}"
         shift || true
         [ -d "$dir" ] || exit 0
@@ -91,13 +175,21 @@ case "$command" in
         done
         ;;
     all)
+        need_store
         [ -d "$dir" ] || exit 0
         for file in "$dir"/*.json; do
             if [ -f "$file" ]; then print_record "$file"; fi
         done
         ;;
+    facts)
+        facts "${1:?job id required}"
+        ;;
+    refs)
+        refs "$@"
+        ;;
     *)
-        echo "usage: records.sh write|update <job_id> <base64> | list <since_minutes> [job_id...] | all" >&2
+        echo "usage: records.sh write|update <job_id> <base64> | list <since_minutes> [job_id...] | all" \
+             "| facts <job_id> | refs <repo>... -- <reference>..." >&2
         exit 2
         ;;
 esac

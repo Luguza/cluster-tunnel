@@ -1,4 +1,4 @@
-"""The bundled records.sh and facts.sh run for real against fake Slurm tools on PATH."""
+"""The bundled records.sh runs for real against fake Slurm tools on PATH."""
 
 from __future__ import annotations
 
@@ -95,6 +95,12 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
+def _posix_path(bash: str, path: Path) -> str:
+    return subprocess.run(
+        [bash, "-c", f"cd '{path.as_posix()}' && pwd"], capture_output=True, text=True, encoding="utf-8"
+    ).stdout.strip()
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
@@ -106,10 +112,7 @@ def repo(tmp_path: Path) -> Path:
 
 
 def test_facts_report_job_and_code(tmp_path: Path, bash: str, repo: Path) -> None:
-    workdir = subprocess.run(
-        [bash, "-c", f"cd '{repo.as_posix()}' && pwd"], capture_output=True, text=True, encoding="utf-8"
-    ).stdout.strip()
-    result = _run(bash, tmp_path, "facts.sh", "101", workdir=workdir)
+    result = _run(bash, tmp_path, "records.sh", "facts", "101", workdir=_posix_path(bash, repo))
     facts = dict(line.split("=", 1) for line in result.stdout.splitlines() if not line.startswith("dirty="))
     assert facts["slurm_cluster"] == "haic"
     assert facts["job_name"] == "train job"
@@ -120,7 +123,43 @@ def test_facts_report_job_and_code(tmp_path: Path, bash: str, repo: Path) -> Non
 
 
 def test_facts_without_workdir_report_only_the_cluster(tmp_path: Path, bash: str) -> None:
-    result = _run(bash, tmp_path, "facts.sh", "101")
+    result = _run(bash, tmp_path, "records.sh", "facts", "101")
     assert result.returncode == 0
     assert "slurm_cluster=haic" in result.stdout
     assert "workdir=" not in result.stdout
+
+
+_REFS_TOOLS = {
+    "scontrol": _FAKE_SCONTROL,
+    # squeue knows job 7 only; sacct knows job 8 only.
+    "squeue": '#!/bin/sh\ncase "$*" in *" 7 "*) echo 7 ;; esac\n',
+    "sacct": '#!/bin/sh\ncase "$*" in *" 8 "*) echo 8 ;; esac\n',
+}
+
+
+def test_refs_finds_jobs_and_commits_and_omits_the_rest(tmp_path: Path, bash: str) -> None:
+    binp = tmp_path / "bin"
+    binp.mkdir()
+    for name, body in _REFS_TOOLS.items():
+        (binp / name).write_text(body, encoding="utf-8", newline="\n")
+        (binp / name).chmod(0o755)
+    stored = tmp_path / "home" / ".ctun" / "jobs" / "haic"
+    stored.mkdir(parents=True)
+    (stored / "9.json").write_text("{}", encoding="utf-8")
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x")
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--short=7", "HEAD"], capture_output=True, text=True, encoding="utf-8"
+    ).stdout.strip()
+
+    env = dict(os.environ, PATH=f"{binp}{os.pathsep}{os.environ['PATH']}", HOME=str(tmp_path / "home"))
+    refs = ["job:7", "job:8", "job:9", "job:10", f"commit:{commit}", "commit:deadbee"]
+    result = subprocess.run(
+        [bash, str(SCRIPTS / "records.sh"), "refs", _posix_path(bash, repo), "--", *refs],
+        capture_output=True, text=True, encoding="utf-8", env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["job:7", "job:8", "job:9", f"commit:{commit}"]
