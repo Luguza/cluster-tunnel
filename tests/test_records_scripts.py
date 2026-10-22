@@ -85,6 +85,16 @@ def test_update_overwrites_a_record_and_creates_a_missing_one(tmp_path: Path, ba
     assert sorted(path.name for path in folder.iterdir()) == ["101.json", "102.json"]  # no temp files left
 
 
+def test_a_record_is_stored_only_under_a_job_id(tmp_path: Path, bash: str) -> None:
+    for command in ("write", "update"):
+        result = _run(bash, tmp_path, "records.sh", command, "../../x", _b64({"job_id": "x"}))
+        assert result.returncode == 2 and "not a job ID" in result.stderr
+    assert not (tmp_path / "home" / ".ctun" / "x.json").exists()
+    assert _run(bash, tmp_path, "records.sh", "update", "101_4", _b64({"job_id": "101_4"})).returncode == 0
+    listed = _run(bash, tmp_path, "records.sh", "list", "0", "../101_4", "101_4").stdout.splitlines()
+    assert [json.loads(line)["job_id"] for line in listed] == ["101_4"]
+
+
 def test_all_with_an_empty_folder_is_empty(tmp_path: Path, bash: str) -> None:
     (tmp_path / "home" / ".ctun" / "jobs" / "haic").mkdir(parents=True)
     result = _run(bash, tmp_path, "records.sh", "all")

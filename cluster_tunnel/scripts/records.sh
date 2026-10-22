@@ -33,6 +33,18 @@ need_store() {
     fi
 }
 
+# A record's file name is its job ID; nothing else may become a path.
+is_job_id() {
+    [[ "$1" =~ ^[0-9]+(_[0-9]+)?$ ]]
+}
+
+need_job_id() {
+    if ! is_job_id "$1"; then
+        echo "not a job ID: $1" >&2
+        exit 2
+    fi
+}
+
 print_record() {
     # Records are one line of JSON; make sure each ends its own line.
     cat "$1"
@@ -106,6 +118,7 @@ refs() {
     shift || true
 
     job_exists() {
+        is_job_id "$1" || return 1
         [ -n "$(squeue -h -j "$1" -o '%i' 2>/dev/null)" ] && return 0
         [ -n "$(sacct -n -X -P -j "$1" -o JobID 2>/dev/null)" ] && return 0
         [ -n "$cluster" ] && [ -f "$dir/$1.json" ]
@@ -136,6 +149,7 @@ case "$command" in
         need_store
         job_id="${1:?job id required}"
         payload="${2:?record required}"
+        need_job_id "$job_id"
         target="$dir/$job_id.json"
         if [ -e "$target" ]; then
             echo "a record for job $job_id already exists" >&2
@@ -154,6 +168,7 @@ case "$command" in
         need_store
         job_id="${1:?job id required}"
         payload="${2:?record required}"
+        need_job_id "$job_id"
         tmp="$(decode_to_temp "$job_id" "$payload")" || exit 5
         mv -f "$tmp" "$dir/$job_id.json"
         ;;
@@ -170,6 +185,7 @@ case "$command" in
             done < <(find "$dir" -maxdepth 1 -name '*.json' -mmin "-$since_min" 2>/dev/null)
         fi
         for job_id in "$@"; do
+            is_job_id "$job_id" || continue
             case "$printed" in *" $job_id "*) continue ;; esac
             if [ -f "$dir/$job_id.json" ]; then print_record "$dir/$job_id.json"; fi
         done

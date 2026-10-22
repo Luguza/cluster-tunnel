@@ -801,9 +801,12 @@ def edit_job(
     the record's ``changes``; the facts from submit time never change. A job
     without a record (e.g. one submitted with plain ``sbatch``) gets one without
     facts, if Slurm knows it. Raises :class:`LoginRequired` without a live
-    tunnel and :class:`RecordError` when the job is unknown, the cluster keeps
-    no records, there is no note to confirm, or the record can't be stored.
+    tunnel and :class:`RecordError` when ``job_id`` is no job ID or the job is
+    unknown, the cluster keeps no records, there is no note to confirm, or the
+    record can't be stored.
     """
+    if not records_mod.is_job_id(job_id):
+        raise RecordError(f"'{job_id}' is not a Slurm job ID (like 51319, or 51319_4 for an array task).")
     config, _ = _load(config, config_path)
     spec = _spec(config, cluster)
     if not ssh.is_live(spec):

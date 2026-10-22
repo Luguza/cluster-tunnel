@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import socket
 import subprocess
 from dataclasses import asdict, dataclass, fields
@@ -32,6 +33,14 @@ if TYPE_CHECKING:
 SCRIPT_PATH = Path(__file__).parent / "scripts" / "records.sh"
 
 SCHEMA_VERSION = 1
+
+#: A job's ID as records are keyed: ``51319``, or ``51319_4`` for one task of an array.
+_JOB_ID = re.compile(r"\d+(?:_\d+)?")
+
+
+def is_job_id(text: str) -> bool:
+    """True if ``text`` is a Slurm job ID a record can be stored under."""
+    return _JOB_ID.fullmatch(text) is not None
 
 
 @dataclass

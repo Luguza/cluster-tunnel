@@ -320,6 +320,24 @@ def test_job_edit_refuses_an_unknown_job(tmp_path: Path, monkeypatch) -> None:
     assert cluster.written == {}
 
 
+def test_job_edit_refuses_what_is_no_job_id(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster(known_refs=("job:5131",))
+    _patch_job(monkeypatch, cluster)
+    for bad in ("5131x", "../../x", "5131_", ""):
+        r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", bad, "--project", "htfm"])
+        assert r.exit_code != 0 and "is not a Slurm job ID" in r.output, bad
+    assert cluster.written == {} and cluster.note_checks == []
+
+
+def test_job_edit_takes_an_array_task(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster(known_refs=("job:5131_4",))
+    _patch_job(monkeypatch, cluster)
+    assert api.edit_job("localhost", "5131_4", project="htfm").changed
+    assert cluster.written["5131_4"]["project"] == "htfm"
+
+
 def test_job_edit_checks_the_note_references(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     cluster = FakeCluster()
