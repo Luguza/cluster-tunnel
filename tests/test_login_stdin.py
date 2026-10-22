@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from cluster_tunnel.cli import cli
-from tests.test_cli import _cfg
+from tests.test_cli import _cfg, _norm
 
 
 def _patch_login(tmp_path: Path, monkeypatch) -> list:
@@ -78,5 +78,5 @@ def test_rejects_values_of_the_wrong_type(tmp_path: Path, monkeypatch, payload: 
     _cfg(tmp_path, monkeypatch)
     logins = _patch_login(tmp_path, monkeypatch)
     r = CliRunner().invoke(cli, ["-t", "localhost", "login", "--credentials-stdin"], input=payload)
-    assert r.exit_code == 1 and "--credentials-stdin:" in r.output
+    assert r.exit_code == 1 and "--credentials-stdin:" in _norm(r)
     assert logins == []
