@@ -595,16 +595,22 @@ def run(
     entry_id = cmdlog.record(cluster, tokens)
     if tty:
         return Result(ssh.run(spec, tokens, tty=True))
+    job_ids: list[str] = []
+
+    def submitted(output: str) -> None:
+        # Log each ID once it is printed: an interrupted run, or one that waits
+        # for its job (`sbatch --wait`), still shows what it submitted.
+        for job_id in jobs_mod.submitted_job_ids(output):
+            job_ids.append(job_id)
+            cmdlog.record_jobs(cluster, entry_id, [job_id])
+
     if capture:
         res = ssh.capture(spec, tokens, timeout=timeout)
         result = Result(res.returncode, res.stdout, res.stderr)
-        output = res.stdout or ""
+        submitted(res.stdout or "")
     else:
-        returncode, output = ssh.run_capturing(spec, tokens)
-        result = Result(returncode)
-    result.job_ids = jobs_mod.submitted_job_ids(output)
-    if result.job_ids:
-        cmdlog.record_jobs(cluster, entry_id, result.job_ids)
+        result = Result(ssh.run(spec, tokens, on_line=submitted))
+    result.job_ids = job_ids
     return result
 
 

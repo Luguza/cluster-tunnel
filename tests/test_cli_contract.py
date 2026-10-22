@@ -62,14 +62,13 @@ def _stub_run(monkeypatch, *, live: bool = True, decision: Decision | None = Non
         calls["decide"].append((name, list(tokens), Path(config_path)))
         return decision or Decision(True, "not a guarded command")
 
-    def fake_run(spec, tokens, tty=False):
+    def fake_run(spec, tokens, tty=False, on_line=None):
         calls["run"].append((list(tokens), tty))
         return rc
 
     monkeypatch.setattr("cluster_tunnel.budget.decide", fake_decide)
     monkeypatch.setattr(cmdlog, "record", lambda name, tokens: calls["record"].append((name, list(tokens))))
     monkeypatch.setattr(ssh, "run", fake_run)
-    monkeypatch.setattr(ssh, "run_capturing", lambda spec, tokens: (ssh.run(spec, tokens), ""))
     return calls
 
 
@@ -528,7 +527,6 @@ def test_every_command_scope_blocks_a_submission_inside_bash_c(tmp_path: Path, m
     monkeypatch.setattr(ssh, "is_live", lambda spec: True)
     monkeypatch.setattr(ssh, "probe", lambda *a: subprocess.CompletedProcess([], 0, "9\n", ""))
     monkeypatch.setattr(ssh, "run", lambda *a, **k: pytest.fail("must not run"))
-    monkeypatch.setattr(ssh, "run_capturing", lambda *a, **k: pytest.fail("must not run"))
     r = _invoke("-t", "c", "run", "--", "bash", "-c", "cd x && sbatch j.sh")
     assert r.exit_code == ExitCode.BUDGET_EXHAUSTED
     assert "ctun-error: budget_exhausted" in _norm(r)

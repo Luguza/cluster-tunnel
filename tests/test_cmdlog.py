@@ -62,8 +62,14 @@ def test_summary_counts_only_commands() -> None:
 def _patch_run(monkeypatch, output: str) -> None:
     monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: object())
     monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: True)
-    monkeypatch.setattr("cluster_tunnel.ssh.run_capturing", lambda spec, tokens: (0, output))
-    monkeypatch.setattr("cluster_tunnel.ssh.run", lambda spec, tokens, tty=False: 0)
+
+    def fake_run(spec, tokens, tty=False, on_line=None):
+        if on_line is not None:
+            for line in output.splitlines():
+                on_line(line)
+        return 0
+
+    monkeypatch.setattr("cluster_tunnel.ssh.run", fake_run)
 
 
 def test_run_logs_the_job_ids_it_submitted(tmp_path: Path, monkeypatch) -> None:
@@ -104,3 +110,20 @@ def test_api_run_returns_the_job_ids_it_submitted(tmp_path: Path, monkeypatch) -
     _patch_run(monkeypatch, "Submitted batch job 1\nSubmitted batch job 2\n")
     assert api.run("localhost", ["sbatch", "--array=0-1", "a.sh"]).job_ids == ["1", "2"]
     assert cmdlog.entries("localhost")[0]["job_ids"] == ["1", "2"]
+
+
+def test_run_logs_a_job_id_before_the_command_ends(tmp_path: Path, monkeypatch) -> None:
+    from cluster_tunnel import api
+
+    _cfg(tmp_path, monkeypatch)
+    monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: object())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: True)
+
+    def interrupted(spec, tokens, tty=False, on_line=None):
+        on_line("Submitted batch job 5")
+        raise KeyboardInterrupt  # Ctrl+C while `sbatch --wait` waits
+
+    monkeypatch.setattr("cluster_tunnel.ssh.run", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        api.run("localhost", ["sbatch", "--wait", "a.sh"])
+    assert cmdlog.entries("localhost")[0]["job_ids"] == ["5"]
