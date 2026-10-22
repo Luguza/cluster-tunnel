@@ -508,14 +508,31 @@ def test_jobs_edit_gives_several_jobs_the_same_change(tmp_path: Path, monkeypatc
     assert "updated job 7" in r.stderr and "job 8 already has these values" in r.stderr
 
 
-def test_jobs_edit_stops_at_the_first_failing_job(tmp_path: Path, monkeypatch) -> None:
+def test_jobs_edit_changes_no_job_when_one_is_unknown(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     cluster = FakeCluster()
     cluster.written["7"] = {"job_id": "7"}
     _patch_job(monkeypatch, cluster)
-    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "999", "--project", "new"])
-    assert r.exit_code != 0 and "999 is unknown" in r.output
-    assert cluster.written["7"]["project"] == "new" and "999" not in cluster.written
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "999", "998", "--project", "new"])
+    assert r.exit_code != 0 and "Jobs 999, 998 are unknown" in _norm(r)
+    assert cluster.written == {"7": {"job_id": "7"}} and cluster.update_calls == 0
+
+
+def test_jobs_edit_reads_and_stores_many_jobs_in_one_call_each(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {str(job_id): {"job_id": str(job_id)} for job_id in range(100, 140)}
+    _patch_job(monkeypatch, cluster)
+    calls = []
+    feed = cluster.feed_script
+    monkeypatch.setattr(
+        "cluster_tunnel.ssh.feed_script", lambda spec, path, args, timeout=None: calls.append(args[0]) or feed(
+            spec, path, args, timeout
+        )
+    )
+    edits = api.edit_jobs("localhost", [str(job_id) for job_id in range(100, 140)], project="htfm")
+    assert all(edit.changed for edit in edits) and calls == ["list", "update"]
+    assert {record["project"] for record in cluster.written.values()} == {"htfm"}
 
 
 def test_update_many_splits_the_records_into_batches_that_fit_a_command_line(monkeypatch) -> None:

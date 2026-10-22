@@ -103,8 +103,9 @@ ctun -t <cluster> jobs edit <id> --confirm-note                 # the human conf
 
 Changes each job's [record](#job-records) on the cluster, so every machine and
 front end sees the change, and prints the resulting records as a JSON list. With
-several jobs it stops at the first that fails; the jobs before it keep their
-change, and running the fixed command again leaves them as they are. To read
+several jobs, all of them are checked first: an unknown job or reference changes
+none of them. They are read and stored a few dozen per SSH call; running the
+command again leaves the jobs that already have the change as they are. To read
 records without changing them, use `jobs --json`; widen `--since` for older
 jobs. A `/` in a project nests it. A new note is unconfirmed until
 `--confirm-note`, and its references are checked as in `run`, commits in the
