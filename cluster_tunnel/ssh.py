@@ -330,12 +330,14 @@ def is_live(spec: ConnSpec) -> bool:
     return check(spec).returncode == 0
 
 
+def _command_argv(spec: ConnSpec, remote: str, *, tty: bool = False) -> list[str]:
+    """The ssh argv that runs the shell command line ``remote`` over the live tunnel."""
+    return ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", *(["-tt"] if tty else []), spec.target, remote]
+
+
 def run(spec: ConnSpec, tokens: list[str], *, tty: bool = False) -> int:
     """Run a command over the live tunnel, streaming I/O; return remote exit code."""
-    argv = ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes"]
-    if tty:
-        argv.append("-tt")
-    argv += [spec.target, shlex.join(tokens)]
+    argv = _command_argv(spec, shlex.join(tokens), tty=tty)
     return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
 
 
@@ -346,7 +348,7 @@ def run_capturing(spec: ConnSpec, tokens: list[str]) -> tuple[int, str]:
     so the caller can read it afterwards (e.g. for ``Submitted batch job <N>``).
     stdin and stderr pass straight through.
     """
-    argv = ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)]
+    argv = _command_argv(spec, shlex.join(tokens))
     sys.stdout.flush()
     out = sys.stdout.buffer
     kept: list[bytes] = []
@@ -368,11 +370,7 @@ def capture(
     After ``timeout`` seconds the local ssh is stopped and exit code 124 comes
     back; the remote command may keep running on the cluster.
     """
-    return captured(
-        spec,
-        ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)],
-        timeout=timeout,
-    )
+    return captured(spec, _command_argv(spec, shlex.join(tokens)), timeout=timeout)
 
 
 def close(spec: ConnSpec) -> bool:
@@ -397,7 +395,7 @@ def feed_script(
     with open(script_path, "rb") as fh:
         return captured(
             spec,
-            ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote],
+            _command_argv(spec, remote),
             stdin=fh,
             timeout=timeout,
         )
