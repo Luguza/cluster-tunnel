@@ -43,6 +43,20 @@ def is_job_id(text: str) -> bool:
     return _JOB_ID.fullmatch(text) is not None
 
 
+def keys(job_id: str) -> list[str]:
+    """The records a job as squeue lists it may have, the closest first.
+
+    A task of an array (``123_4``, pending ``123_[5-9]``) or a component of a
+    heterogeneous job (``123+0``) has its own record only if ``jobs edit`` gave
+    it one; otherwise it shares the record ``run`` wrote for the job, ``123``.
+    """
+    base = re.match(r"\d+", job_id)
+    found = [job_id] if is_job_id(job_id) else []
+    if base and base.group() != job_id:
+        found.append(base.group())
+    return found
+
+
 @dataclass
 class JobRecord:
     """One job. Facts are ``None`` (or empty) in a record ``ctun jobs edit`` created without them."""

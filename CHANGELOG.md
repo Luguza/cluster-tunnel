@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   git commit, branch, pushed state and uncommitted files there at submit time
   (at most 100 files, and `uncommitted_omitted` counting the rest). A
   failing fact only warns (`Result.warnings`). `ctun jobs --json`
-  (`api.jobs(with_records=True)`) attaches each job's `record` and lists
+  (`api.jobs(with_records=True)`) attaches each job's `record` (the tasks of an
+  array share the array's) and lists
   `records_without_job` per cluster. Turn it off per cluster with
   `job_records: false`.
 - **Checked references in notes.** `ctun run --note` checks its `job:<id>`

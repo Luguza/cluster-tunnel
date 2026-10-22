@@ -180,6 +180,40 @@ def test_jobs_json_attaches_records(tmp_path: Path, monkeypatch) -> None:
     assert entry["records_error"] is None
 
 
+def test_record_keys_lead_from_a_task_to_its_array() -> None:
+    assert records.keys("123") == ["123"]
+    assert records.keys("123_4") == ["123_4", "123"]
+    assert records.keys("123_[5-9]") == ["123"]
+    assert records.keys("123+0") == ["123"]
+    assert records.keys("N/A") == []
+
+
+def test_jobs_json_gives_an_arrays_tasks_its_record(tmp_path: Path, monkeypatch) -> None:
+    from cluster_tunnel.jobs import Job
+
+    _cfg(tmp_path, monkeypatch)
+    listed = [
+        Job("active", "123_1", "RUNNING", "1:00", "2:00:00", "gpu", "1", "N/A", "sweep"),
+        Job("active", "123_2", "RUNNING", "1:00", "2:00:00", "gpu", "1", "N/A", "sweep"),
+        Job("active", "123_[3-9]", "PENDING", "0:00", "2:00:00", "gpu", "1", "N/A", "sweep"),
+    ]
+    _patch_jobs(monkeypatch, jobs=listed)
+    asked = []
+
+    def list_recent(spec, since, ids):
+        asked.extend(ids)
+        return [
+            records.JobRecord.from_json('{"job_id": "123", "project": "htfm"}'),
+            records.JobRecord.from_json('{"job_id": "123_2", "project": "htfm/fix"}'),
+        ]
+
+    monkeypatch.setattr("cluster_tunnel.records.list_recent", list_recent)
+    entry = json.loads(CliRunner().invoke(cli, ["-t", "localhost", "jobs", "--json"]).output)["clusters"][0]
+    assert [job["record"]["project"] for job in entry["jobs"]] == ["htfm", "htfm/fix", "htfm"]
+    assert entry["records_without_job"] == []
+    assert asked == ["123_1", "123", "123_2"]
+
+
 def test_jobs_json_reports_unreadable_records_and_still_lists_the_jobs(tmp_path: Path, monkeypatch) -> None:
     from cluster_tunnel.jobs import Job
 

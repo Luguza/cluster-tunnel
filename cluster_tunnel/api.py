@@ -149,8 +149,9 @@ class ClusterJobs:
     def as_dict(self) -> dict:
         """The entry as ``ctun jobs --json`` prints it.
 
-        With records read, each job carries its ``record`` (or ``None``), and
-        ``records_without_job`` lists the records whose job is not listed.
+        With records read, each job carries its ``record`` (or ``None``; an
+        array's tasks share the array's), and ``records_without_job`` lists the
+        records whose job is not listed.
         """
         entry = {
             "cluster": self.cluster,
@@ -161,11 +162,14 @@ class ClusterJobs:
         }
         if self.records is None and self.records_error is None:
             return entry
-        unlisted = dict(self.records or {})
+        found = self.records or {}
+        listed = set()
         for job in entry["jobs"]:
-            record = unlisted.pop(job["jobid"], None)
-            job["record"] = record.as_dict() if record else None
-        entry["records_without_job"] = [record.as_dict() for record in unlisted.values()]
+            # The tasks of an array share its record (see records.keys).
+            key = next((key for key in records_mod.keys(job["jobid"]) if key in found), None)
+            job["record"] = found[key].as_dict() if key else None
+            listed.add(key)
+        entry["records_without_job"] = [record.as_dict() for key, record in found.items() if key not in listed]
         entry["records_error"] = self.records_error
         return entry
 
@@ -778,7 +782,8 @@ def jobs(
                 item.error = str(exc)
         if with_records and item.live and item.error is None and entry.job_records:
             try:
-                found = records_mod.list_recent(spec, since_minutes, [job.jobid for job in item.jobs])
+                keys = dict.fromkeys(key for job in item.jobs for key in records_mod.keys(job.jobid))
+                found = records_mod.list_recent(spec, since_minutes, list(keys))
                 item.records = {record.job_id: record for record in found}
             except RuntimeError as exc:
                 item.records_error = str(exc)
