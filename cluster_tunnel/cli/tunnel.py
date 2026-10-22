@@ -33,7 +33,7 @@ def _stdin_credentials():
     return api.Credentials(password=password, otp=otp or None, limit=None if limit is None else float(limit))
 
 
-def _logged_in_through_vscode(name: str, default_limit: float | None, config) -> bool:
+def _logged_in_through_vscode(name: str, default_limit: float | None, config, timeout: int) -> bool:
     """True once the front end that started the agent has logged in; False if none took it.
 
     A tunnel that is up already needs no window: `api.login` keeps it.
@@ -45,9 +45,11 @@ def _logged_in_through_vscode(name: str, default_limit: float | None, config) ->
     if not os.environ.get(login_bridge.BRIDGE_VARIABLE) or api.is_live(name, config=config):
         return False
     try:
-        outcome = login_bridge.log_in(name, default_limit)
+        outcome = login_bridge.log_in(name, default_limit, timeout=timeout)
     except login_bridge.Unavailable:
         return False
+    except login_bridge.NoAnswer:
+        raise click.ClickException(f"No answer through the login bridge within {timeout}s.") from None
     if outcome.status == "cancelled":
         raise click.ClickException("Login cancelled.")
     if outcome.status != "live":
@@ -115,7 +117,7 @@ class TunnelCommandsMixin:
         config = self.load_config()
         name, entry = self.resolve_cluster(config)
         default_limit = limit if limit is not None else (entry.budget.session_limit if entry.budget else None)
-        in_vscode = interactive and _logged_in_through_vscode(name, default_limit, config)
+        in_vscode = interactive and _logged_in_through_vscode(name, default_limit, config, timeout)
         if in_vscode:
             # The window's own `login --credentials-stdin` opened the tunnel and started the session.
             target = api.connection(name, config=config).target

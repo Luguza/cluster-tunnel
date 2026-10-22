@@ -42,7 +42,7 @@ def test_sends_the_cluster_and_limit_and_returns_the_outcome(tmp_path: Path, mon
     address = tmp_path / "bridge.sock"
     requests = _serve_once(address, b'{"status": "live"}\n')
     monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, str(address))
-    outcome = login_bridge.log_in("haicore", 20.0)
+    outcome = login_bridge.log_in("haicore", 20.0, timeout=5)
     assert outcome.status == "live"
     assert requests == [{"cluster": "haicore", "session_limit": 20.0}]
 
@@ -53,20 +53,64 @@ def test_a_window_that_closes_without_reply_declines(tmp_path: Path, monkeypatch
     _serve_once(address, b"")
     monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, str(address))
     with pytest.raises(login_bridge.Unavailable):
-        login_bridge.log_in("haicore", None)
+        login_bridge.log_in("haicore", None, timeout=5)
+
+
+@unix_only
+@pytest.mark.parametrize(
+    "reply", [b'"live"\n', b"[]\n", b"null\n", b'{"status": "declined"}\n', b"{}\n", b"not json\n"]
+)
+def test_any_other_reply_declines_so_the_popup_opens(tmp_path: Path, monkeypatch, reply: bytes) -> None:
+    address = tmp_path / "bridge.sock"
+    _serve_once(address, reply)
+    monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, str(address))
+    with pytest.raises(login_bridge.Unavailable):
+        login_bridge.log_in("haicore", None, timeout=5)
+
+
+@unix_only
+def test_a_front_end_that_never_answers_times_out(tmp_path: Path, monkeypatch) -> None:
+    address = tmp_path / "bridge.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(address))
+    server.listen(1)  # takes the connection, never answers
+    monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, str(address))
+    try:
+        with pytest.raises(login_bridge.NoAnswer):
+            login_bridge.log_in("haicore", None, timeout=0.2)
+    finally:
+        server.close()
+
+
+@unix_only
+def test_the_socket_is_closed_on_every_path(tmp_path: Path, monkeypatch) -> None:
+    import gc
+    import warnings
+
+    address = tmp_path / "bridge.sock"
+    _serve_once(address, b'{"status": "live"}\n')
+    monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, str(address))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        login_bridge.log_in("haicore", None, timeout=5)
+        monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, str(tmp_path / "gone.sock"))
+        with pytest.raises(login_bridge.Unavailable):
+            login_bridge.log_in("haicore", None, timeout=5)
+        gc.collect()
+    assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
 
 
 def test_without_a_window_it_is_unavailable(monkeypatch) -> None:
     monkeypatch.delenv(login_bridge.BRIDGE_VARIABLE, raising=False)
     with pytest.raises(login_bridge.Unavailable):
-        login_bridge.log_in("haicore", None)
+        login_bridge.log_in("haicore", None, timeout=5)
 
 
 def test_a_window_that_has_closed_is_unavailable(tmp_path: Path, monkeypatch) -> None:
     gone = r"\\.\pipe\ctun-vscode-gone" if sys.platform == "win32" else str(tmp_path / "gone.sock")
     monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, gone)
     with pytest.raises(login_bridge.Unavailable):
-        login_bridge.log_in("haicore", None)
+        login_bridge.log_in("haicore", None, timeout=5)
 
 
 def _patch_login(tmp_path: Path, monkeypatch, outcome) -> None:
@@ -75,7 +119,7 @@ def _patch_login(tmp_path: Path, monkeypatch, outcome) -> None:
     monkeypatch.setattr(paths, "cache_dir", lambda: tmp_path / "cache")
     monkeypatch.setattr(ssh, "is_live", lambda spec: False)
     monkeypatch.setattr(popup, "prompt_credentials", lambda *a, **k: (_ for _ in ()).throw(AssertionError("popup")))
-    monkeypatch.setattr(login_bridge, "log_in", lambda name, limit: outcome)
+    monkeypatch.setattr(login_bridge, "log_in", lambda name, limit, timeout: outcome)
     monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, "the-window")
 
 
