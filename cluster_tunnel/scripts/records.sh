@@ -134,7 +134,8 @@ refs() {
 
     commit_exists() {
         local repo
-        for repo in "${repos[@]}"; do
+        # Not "${repos[@]}": bash before 4.4 (RHEL 7) calls an empty array unbound.
+        for repo in ${repos[@]+"${repos[@]}"}; do
             git -C "$repo" cat-file -e "$1^{commit}" 2>/dev/null && return 0
         done
         return 1
