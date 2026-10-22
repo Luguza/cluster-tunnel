@@ -449,6 +449,32 @@ def test_plain_jobs_and_jobs_list_print_the_same_overview(tmp_path: Path, monkey
     assert json.loads(plain.output) == json.loads(listed.output)
 
 
+def test_jobs_options_before_list_count_for_list(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_jobs(monkeypatch)
+    windows = []
+    monkeypatch.setattr(
+        "cluster_tunnel.jobs.query",
+        lambda spec, user, since_minutes: windows.append(since_minutes) or jobs.Overview("haic", []),
+    )
+    before = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "-s", "2d", "--json", "list"])
+    after = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "list", "-s", "2d", "--json"])
+    own = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "-s", "2d", "list", "-s", "1h", "--json"])
+    assert before.exit_code == after.exit_code == own.exit_code == 0, before.output
+    assert json.loads(before.output) == json.loads(after.output)
+    assert windows == [2 * 24 * 60, 2 * 24 * 60, 60]  # list's own --since wins
+
+
+def test_jobs_options_before_edit_are_refused(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written["7"] = {"job_id": "7"}
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "--json", "edit", "7", "--project", "x"])
+    assert r.exit_code == 2 and "takes no --since or --json" in _norm(r)
+    assert "project" not in cluster.written["7"]
+
+
 def test_jobs_edit_gives_several_jobs_the_same_change(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     cluster = FakeCluster()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 import rich_click as click
+from click.core import ParameterSource
 
 from cluster_tunnel.cli.errors import fail
 
@@ -64,6 +65,11 @@ _SINCE_OPTION = click.option(
 _JSON_OPTION = click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
 
 
+def _given(ctx: click.Context, *names: str) -> bool:
+    """True if any of the options ``names`` was given on the command line (not left at its default)."""
+    return any(ctx.get_parameter_source(name) is not ParameterSource.DEFAULT for name in names)
+
+
 class JobsCommandsMixin:
     """Mixin providing the `jobs` group: the overview (`jobs`, `jobs list`) and `jobs edit`."""
 
@@ -85,14 +91,20 @@ class JobsCommandsMixin:
         """
         if ctx.invoked_subcommand is None:
             ctx.obj._list_jobs(since, as_json)
+        elif ctx.invoked_subcommand == "edit" and _given(ctx, "since", "as_json"):
+            raise click.UsageError("`jobs edit` takes no --since or --json; it always prints JSON.")
 
     @jobs_command.command("list")
-    @click.pass_obj
+    @click.pass_context
     @_SINCE_OPTION
     @_JSON_OPTION
-    def jobs_list_command(self, since: str, as_json: bool) -> None:
+    def jobs_list_command(ctx: click.Context, since: str, as_json: bool) -> None:
         """List your Slurm jobs, as plain `ctun jobs` does."""
-        self._list_jobs(since, as_json)
+        # `ctun jobs --json list` means `ctun jobs list --json`; list's own options win.
+        group = ctx.parent
+        if not _given(ctx, "since"):
+            since = group.params["since"]
+        ctx.obj._list_jobs(since, as_json or group.params["as_json"])
 
     @jobs_command.command("edit")
     @click.pass_obj
