@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import rich_click as click
 
+from cluster_tunnel.cli.errors import fail
+
 
 class ProjectsCommandsMixin:
     """Mixin providing the `projects` group: `projects list` and `projects rename`."""
@@ -57,6 +59,9 @@ class ProjectsCommandsMixin:
         command again once it is logged in; running it again is safe. The
         records go to the cluster in batches, a few dozen per SSH call.
 
+        Exits 1 if the rename failed on a cluster, and with a target, 10
+        (`login_required`) if its tunnel is down or 1 if it keeps no records.
+
         Example: ctun projects rename htfm archive/htfm
         """
         from cluster_tunnel import api
@@ -68,17 +73,25 @@ class ProjectsCommandsMixin:
             renames = api.rename_project(old, new, self.target or None, config=config, config_path=self.config_path)
         except ValueError as exc:
             raise click.UsageError(str(exc)) from None
+        if self.target and renames[0].job_records and not renames[0].live:
+            fail(str(api.LoginRequired(self.target)), api.LoginRequired.exit_code)
         results = [entry.as_dict() for entry in renames]
 
         if as_json:
             import json
 
             click.echo(json.dumps({"clusters": results}, indent=2, ensure_ascii=False))
-            return
-        for entry in results:
-            if not self._render_cluster_problem(entry):
-                count = len(entry["renamed"])
-                self.cons.print(f"[bold cyan]{entry['cluster']}[/bold cyan]  {old} → {new}  [dim]{count} jobs[/dim]")
+        else:
+            for entry in results:
+                if not self._render_cluster_problem(entry) or entry["renamed"]:
+                    count = len(entry["renamed"])
+                    self.cons.print(
+                        f"[bold cyan]{entry['cluster']}[/bold cyan]  {old} → {new}  [dim]{count} jobs[/dim]"
+                    )
+        # A sweep only notes the clusters it cannot reach; a failure, or a target
+        # that can't take the rename, is an error.
+        if any(entry.error for entry in renames) or (self.target and not renames[0].job_records):
+            raise SystemExit(1)
 
     def _render_cluster_problem(self, entry: dict) -> bool:
         """Prints why the cluster of `entry` was skipped; False when it was not."""

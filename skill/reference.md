@@ -153,7 +153,11 @@ projects already in NEW stay where they are.
 where `renamed` lists the job IDs whose record changed, also when `error` says
 the rename stopped partway; `job_records` and `error` are as in
 `projects list`. A record edited on another machine meanwhile keeps that edit:
-ctun reads it again and renames it from there. The records go back to the cluster a few
+ctun reads it again and renames it from there.
+
+It exits 1 when the rename failed on any cluster. With `-t <cluster>`, a down
+tunnel exits 10 (`ctun-error: login_required`), and a cluster that keeps no
+records exits 1. Without a target, down clusters are only noted. The records go back to the cluster a few
 dozen per SSH call.
 
 **Only rename a project after the user's explicit yes** to the exact command.

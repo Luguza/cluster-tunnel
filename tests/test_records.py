@@ -738,9 +738,51 @@ def test_run_and_edit_store_the_project_name_as_stored(tmp_path: Path, monkeypat
     assert api.edit_job("localhost", "7", project=" eval/ ").record["project"] == "eval"
 
 
-def test_projects_rename_skips_a_down_tunnel(tmp_path: Path, monkeypatch) -> None:
+def test_projects_rename_on_a_down_target_needs_a_login(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     _patch_job(monkeypatch, FakeCluster())
     monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: False)
-    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "htfm", "eval"])
-    assert r.exit_code == 0 and "tunnel down" in r.output
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "htfm", "eval", "--json"])
+    assert r.exit_code == ExitCode.LOGIN_REQUIRED and "login_required" in r.output
+
+
+def _two_clusters(tmp_path: Path, monkeypatch, cluster: FakeCluster, live: set[str]) -> None:
+    config = _cfg(tmp_path, monkeypatch)
+    config.write_text(
+        "clusters:\n  a:\n    host: a\n  b:\n    host: b\n  c:\n    host: c\n    job_records: false\n",
+        encoding="utf-8",
+    )
+    _patch_job(monkeypatch, cluster)
+    monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: name)
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: spec in live)
+
+
+def test_projects_rename_sweep_notes_a_down_cluster_and_succeeds(tmp_path: Path, monkeypatch) -> None:
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}}
+    _two_clusters(tmp_path, monkeypatch, cluster, live={"a"})
+    r = CliRunner().invoke(cli, ["projects", "rename", "htfm", "eval"])
+    assert r.exit_code == 0, r.output
+    assert "tunnel down" in r.output and "job_records is off" in r.output and "1 jobs" in r.output
+
+
+def test_projects_rename_fails_when_a_cluster_fails(tmp_path: Path, monkeypatch) -> None:
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}}
+    _two_clusters(tmp_path, monkeypatch, cluster, live={"a", "b"})
+
+    def fail(spec, pairs):
+        raise records.UpdateError("could not store the records of jobs 7: timed out", [])
+
+    monkeypatch.setattr("cluster_tunnel.records.update_many", fail)
+    r = CliRunner().invoke(cli, ["projects", "rename", "htfm", "eval", "--json"])
+    assert r.exit_code == 1
+    assert [entry["error"] for entry in json.loads(r.stdout)["clusters"]][:2] == [
+        "could not store the records of jobs 7: timed out"
+    ] * 2
+
+
+def test_projects_rename_on_a_target_without_records_fails(tmp_path: Path, monkeypatch) -> None:
+    _two_clusters(tmp_path, monkeypatch, FakeCluster(), live={"a", "b", "c"})
+    r = CliRunner().invoke(cli, ["-t", "c", "projects", "rename", "htfm", "eval"])
+    assert r.exit_code == 1 and "job_records is off" in r.output
