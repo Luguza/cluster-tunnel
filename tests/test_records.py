@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -25,6 +26,11 @@ FACTS_OUTPUT = (
 )
 
 
+def _version(record: dict) -> str:
+    """The version records.sh gives a record that FakeCluster lists as json.dumps(record)."""
+    return hashlib.sha256(json.dumps(record).encode("utf-8")).hexdigest()
+
+
 class FakeCluster:
     """Answers `feed_script` for records.sh like a cluster would."""
 
@@ -35,6 +41,8 @@ class FakeCluster:
         self.written: dict[str, dict] = {}
         self.note_checks: list[list] = []
         self.update_calls = 0
+        #: Called before each update call, to change records "on another machine".
+        self.meanwhile = lambda: None
 
     def feed_script(self, spec, script_path: Path, args: list, timeout=None) -> subprocess.CompletedProcess:
         assert script_path == records.SCRIPT_PATH
@@ -47,11 +55,22 @@ class FakeCluster:
             if self.facts_rc:
                 return subprocess.CompletedProcess([], self.facts_rc, "", "squeue: not found")
             return subprocess.CompletedProcess([], 0, f"{FACTS_OUTPUT}submitted_ago={self.submitted_ago}\n", "")
-        if command in ("write", "update"):
-            self.update_calls += command == "update"
-            for job_id, payload in zip(rest[0::2], rest[1::2]):
-                self.written[job_id] = json.loads(base64.b64decode(payload))
+        if command == "write":
+            job_id, payload = rest
+            self.written[job_id] = json.loads(base64.b64decode(payload))
             return subprocess.CompletedProcess([], 0, "", "")
+        if command == "update":
+            self.update_calls += 1
+            self.meanwhile()
+            said = []
+            for job_id, version, payload in zip(rest[0::3], rest[1::3], rest[2::3]):
+                current = self.written.get(job_id)
+                if version != ("absent" if current is None else _version(current)):
+                    said.append(f"changed {job_id}")
+                    continue
+                self.written[job_id] = json.loads(base64.b64decode(payload))
+                said.append(f"stored {job_id}")
+            return subprocess.CompletedProcess([], 0, "".join(f"{line}\n" for line in said), "")
         lines = "\n".join(json.dumps(record) for record in self.written.values())
         return subprocess.CompletedProcess([], 0, lines, "")
 
@@ -502,9 +521,32 @@ def test_jobs_edit_stops_at_the_first_failing_job(tmp_path: Path, monkeypatch) -
 def test_update_many_splits_the_records_into_batches_that_fit_a_command_line(monkeypatch) -> None:
     cluster = FakeCluster()
     monkeypatch.setattr("cluster_tunnel.ssh.feed_script", cluster.feed_script)
-    many = [{"job_id": str(job_id), "note": "x" * 1000} for job_id in range(100)]
-    records.update_many(object(), many)
+    many = [({"job_id": str(job_id), "note": "x" * 1000}, "absent") for job_id in range(100)]
+    done = records.update_many(object(), many)
     assert len(cluster.written) == 100 and cluster.update_calls > 1
+    assert done.stored == [str(job_id) for job_id in range(100)] and done.changed == []
+
+
+def test_update_many_names_what_it_stored_before_a_failure(monkeypatch) -> None:
+    calls = []
+
+    def flaky(spec, script_path, args, timeout=None):
+        job_ids = args[1::3]
+        calls.append(job_ids)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess([], 0, "".join(f"stored {i}\n" for i in job_ids), "")
+        # The second call stores its first record, then fails.
+        return subprocess.CompletedProcess([], 5, f"stored {job_ids[0]}\n", "the record is not valid base64")
+
+    monkeypatch.setattr("cluster_tunnel.ssh.feed_script", flaky)
+    many = [({"job_id": str(job_id), "note": "x" * 7000}, "absent") for job_id in range(4)]
+    try:
+        records.update_many(object(), many)
+    except records.UpdateError as exc:
+        assert calls == [["0", "1"], ["2", "3"]] and exc.stored == ["0", "1", "2"]
+        assert "could not store the records of jobs 3: the record is not valid base64" in str(exc)
+    else:
+        raise AssertionError("a failed call must raise")
 
 
 # --- listing projects (ctun projects list) ---------------------------------------
@@ -613,6 +655,63 @@ def test_damaged_records_neither_stop_nor_break_a_rename(tmp_path: Path, monkeyp
     [entry] = api.rename_project("htfm", "eval", "localhost")
     assert entry.error is None and entry.renamed == ["7"]
     assert cluster.written["7"]["project"] == "eval" and cluster.written["a"] == {"project": "htfm"}
+
+
+def test_a_rename_keeps_an_edit_made_meanwhile_on_another_machine(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm", "note": "x"}, "8": {"job_id": "8", "project": "htfm"}}
+    _patch_job(monkeypatch, cluster)
+
+    def confirm_once():
+        cluster.meanwhile = lambda: None
+        cluster.written["7"] = {**cluster.written["7"], "note_confirmed": True}
+
+    cluster.meanwhile = confirm_once
+    [entry] = api.rename_project("htfm", "eval", "localhost")
+    assert entry.error is None and sorted(entry.renamed) == ["7", "8"] and cluster.update_calls == 2
+    assert cluster.written["7"]["project"] == "eval" and cluster.written["7"]["note_confirmed"] is True
+
+
+def test_a_rename_gives_up_on_a_record_that_keeps_changing(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}, "8": {"job_id": "8", "project": "htfm"}}
+    _patch_job(monkeypatch, cluster)
+    edits = iter(range(100))
+    cluster.meanwhile = lambda: cluster.written["7"].update(note=f"edit {next(edits)}")
+    [entry] = api.rename_project("htfm", "eval", "localhost")
+    assert entry.renamed == ["8"] and "kept changing while they were renamed: 7" in entry.error
+
+
+def test_a_failed_rename_names_what_it_stored(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}}
+    _patch_job(monkeypatch, cluster)
+
+    def fail(spec, pairs):
+        raise records.UpdateError("could not store the records of jobs 8: timed out", ["7"])
+
+    monkeypatch.setattr("cluster_tunnel.records.update_many", fail)
+    [entry] = api.rename_project("htfm", "eval", "localhost")
+    assert entry.renamed == ["7"] and entry.error.endswith("timed out")
+
+
+def test_jobs_edit_keeps_an_edit_made_meanwhile_on_another_machine(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "note": "x"}}
+    _patch_job(monkeypatch, cluster)
+
+    def confirm_once():
+        cluster.meanwhile = lambda: None
+        cluster.written["7"] = {**cluster.written["7"], "note_confirmed": True}
+
+    cluster.meanwhile = confirm_once
+    edit = api.edit_job("localhost", "7", project="htfm")
+    assert edit.changed and cluster.update_calls == 2
+    assert cluster.written["7"]["project"] == "htfm" and cluster.written["7"]["note_confirmed"] is True
 
 
 def test_project_names_lose_stray_slashes_and_blanks() -> None:

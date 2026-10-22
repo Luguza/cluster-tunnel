@@ -150,8 +150,10 @@ is safe to repeat, also when NEW lies inside OLD (`htfm` to `htfm/old`): the
 projects already in NEW stay where they are.
 
 `--json` prints `{"clusters": [{cluster, live, job_records, error, renamed}]}`,
-where `renamed` lists the job IDs whose record changed; `job_records` and
-`error` are as in `projects list`. The records go back to the cluster a few
+where `renamed` lists the job IDs whose record changed, also when `error` says
+the rename stopped partway; `job_records` and `error` are as in
+`projects list`. A record edited on another machine meanwhile keeps that edit:
+ctun reads it again and renames it from there. The records go back to the cluster a few
 dozen per SSH call.
 
 **Only rename a project after the user's explicit yes** to the exact command.

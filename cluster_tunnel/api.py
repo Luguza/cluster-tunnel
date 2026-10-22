@@ -221,7 +221,8 @@ class ProjectRename:
     live: bool
     job_records: bool  # false: the cluster keeps no records, so it was skipped
     error: Optional[str] = None
-    renamed: list[str] = field(default_factory=list)  # the IDs of the jobs whose record changed
+    #: The IDs of the jobs whose record was renamed, also those stored before an ``error``.
+    renamed: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         """The entry as ``ctun projects rename --json`` prints it."""
@@ -848,7 +849,8 @@ def edit_job(
     as in :func:`run` (:class:`NoteReferenceInvalid`). Each change is logged in
     the record's ``changes``; the facts from submit time never change. A job
     without a record (e.g. one submitted with plain ``sbatch``) gets one without
-    facts, if Slurm knows it. Raises :class:`LoginRequired` without a live
+    facts, if Slurm knows it. A record another machine changes meanwhile gets
+    the edit on top of that change. Raises :class:`LoginRequired` without a live
     tunnel and :class:`RecordError` when ``job_id`` is no job ID or the job is
     unknown, the cluster keeps no records, there is no note to confirm, or the
     record can't be stored.
@@ -864,21 +866,26 @@ def edit_job(
     if not config.clusters[cluster].job_records:
         raise RecordError(f"job_records is off for '{cluster}'.")
     try:
-        current = records_mod.read(spec, job_id)
-        if current is None and notes_mod.unknown_references(spec, [f"job:{job_id}"]):
-            raise RecordError(f"Job {job_id} is unknown on '{cluster}' (not in squeue or sacct).")
-        updated = records_mod.edited(current, job_id, project=project, note=note, confirm_note=confirm_note)
-        if updated is None:
-            return RecordEdit(job_id, current, changed=False)
-        if note:
-            workdir = (updated.get("code") or {}).get("workdir")
-            _check_note(
-                spec, notes_mod.references(note), project=updated.get("project"), repos=[workdir] if workdir else []
+        for _ in range(_EDIT_ATTEMPTS):
+            current = records_mod.read(spec, job_id)
+            if current.version == records_mod.ABSENT and notes_mod.unknown_references(spec, [f"job:{job_id}"]):
+                raise RecordError(f"Job {job_id} is unknown on '{cluster}' (not in squeue or sacct).")
+            updated = records_mod.edited(
+                current.record, job_id, project=project, note=note, confirm_note=confirm_note
             )
-        records_mod.update(spec, updated)
+            if updated is None:
+                return RecordEdit(job_id, current.record or None, changed=False)
+            if note:
+                workdir = (updated.get("code") or {}).get("workdir")
+                _check_note(
+                    spec, notes_mod.references(note), project=updated.get("project"), repos=[workdir] if workdir else []
+                )
+            if records_mod.update(spec, updated, current.version):
+                return RecordEdit(job_id, updated, changed=True)
+            # Another machine changed the record since it was read: apply the edit to that.
     except (RuntimeError, ValueError) as exc:
         raise RecordError(str(exc)) from exc
-    return RecordEdit(job_id, updated, changed=True)
+    raise RecordError(f"The record of job {job_id} kept changing while it was edited; run the command again.")
 
 
 # --- projects ----------------------------------------------------------------------
@@ -927,7 +934,9 @@ def rename_project(
     tunnel; a down cluster keeps ``old``, so call it again once it is logged in,
     which is safe. Both names are taken as :func:`records.project_name` stores
     them; ``ValueError`` if either is empty then. A damaged record (no job ID,
-    a project that is no string) is left as it is.
+    a project that is no string) is left as it is. A record another machine
+    changes meanwhile is read and renamed again, never overwritten with what was
+    read before. If storing fails, ``renamed`` still lists what was stored.
     """
     old, new = records_mod.project_name(old), records_mod.project_name(new)
     if not old:
@@ -939,17 +948,22 @@ def rename_project(
     for spec, item in _record_clusters(config, cluster, ProjectRename):
         if spec is not None:
             try:
-                changed = []
-                for current in records_mod.list_all_raw(spec):
-                    job_id = records_mod.job_id_of(current)
-                    project = records_mod.renamed_project(current.get("project"), old, new)
-                    if job_id is None or project is None:
-                        continue  # a damaged record must not stop the others
-                    updated = records_mod.edited(current, job_id, project=project, note=None, confirm_note=False)
-                    if updated is not None:
-                        changed.append(updated)
-                records_mod.update_many(spec, changed)
-                item.renamed = [str(record["job_id"]) for record in changed]
+                found = records_mod.list_all_stored(spec)
+                for _ in range(_EDIT_ATTEMPTS):
+                    done = records_mod.update_many(spec, _renamed(found, old, new))
+                    item.renamed += done.stored
+                    if not done.changed:
+                        break
+                    # Edited on another machine since they were read: rename what is there now.
+                    found = records_mod.read_many(spec, done.changed)
+                else:
+                    item.error = (
+                        "these records kept changing while they were renamed: "
+                        + ", ".join(done.changed) + "; run the command again"
+                    )
+            except records_mod.UpdateError as exc:
+                item.renamed += exc.stored
+                item.error = str(exc)
             except RuntimeError as exc:
                 item.error = str(exc)
         results.append(item)
@@ -957,6 +971,24 @@ def rename_project(
 
 
 # --- helpers -----------------------------------------------------------------------
+
+
+#: How often an edit is applied again to a record another machine changed meanwhile.
+_EDIT_ATTEMPTS = 3
+
+
+def _renamed(found: list[records_mod.Stored], old: str, new: str) -> list[tuple[dict, str]]:
+    """``(record, version)`` for each record in ``found`` that renaming ``old`` to ``new`` changes."""
+    changed = []
+    for current in found:
+        job_id = records_mod.job_id_of(current.record)
+        project = records_mod.renamed_project(current.record.get("project"), old, new)
+        if job_id is None or project is None:
+            continue  # a damaged record must not stop the others
+        updated = records_mod.edited(current.record, job_id, project=project, note=None, confirm_note=False)
+        if updated is not None:
+            changed.append((updated, current.version))
+    return changed
 
 
 def _record_clusters(config: Config, cluster: Optional[str], result_type: type):

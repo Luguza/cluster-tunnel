@@ -63,7 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renames a project in every job record of each live cluster, with the projects
   nested in it (`htfm/mh` → `archive/htfm/mh`). Each change is logged in the
   record like `jobs edit`, and the records go back a few dozen per SSH call
-  (`records.sh update` takes several records).
+  (`records.sh update` takes several records). A record another machine edits
+  meanwhile is renamed again from its new state, not overwritten; `jobs edit`
+  does the same. If storing fails partway, `renamed` still lists what was stored.
 
 ### Changed
 
