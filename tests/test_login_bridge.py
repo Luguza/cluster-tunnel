@@ -1,4 +1,4 @@
-"""`login -i` inside a VS Code window: the window logs in, the popup stays shut."""
+"""`login -i` with a front end behind CTUN_LOGIN_BRIDGE: it logs in, the popup stays shut."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from cluster_tunnel import vscode_login
+from cluster_tunnel import login_bridge
 from cluster_tunnel.cli import cli
 from tests.test_cli import _cfg
 
@@ -41,8 +41,8 @@ unix_only = pytest.mark.skipif(sys.platform == "win32", reason="the test server 
 def test_sends_the_cluster_and_limit_and_returns_the_outcome(tmp_path: Path, monkeypatch) -> None:
     address = tmp_path / "bridge.sock"
     requests = _serve_once(address, b'{"status": "live"}\n')
-    monkeypatch.setenv(vscode_login.BRIDGE_VARIABLE, str(address))
-    outcome = vscode_login.log_in("haicore", 20.0)
+    monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, str(address))
+    outcome = login_bridge.log_in("haicore", 20.0)
     assert outcome.status == "live"
     assert requests == [{"cluster": "haicore", "session_limit": 20.0}]
 
@@ -51,22 +51,22 @@ def test_sends_the_cluster_and_limit_and_returns_the_outcome(tmp_path: Path, mon
 def test_a_window_that_closes_without_reply_declines(tmp_path: Path, monkeypatch) -> None:
     address = tmp_path / "bridge.sock"
     _serve_once(address, b"")
-    monkeypatch.setenv(vscode_login.BRIDGE_VARIABLE, str(address))
-    with pytest.raises(vscode_login.Unavailable):
-        vscode_login.log_in("haicore", None)
+    monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, str(address))
+    with pytest.raises(login_bridge.Unavailable):
+        login_bridge.log_in("haicore", None)
 
 
 def test_without_a_window_it_is_unavailable(monkeypatch) -> None:
-    monkeypatch.delenv(vscode_login.BRIDGE_VARIABLE, raising=False)
-    with pytest.raises(vscode_login.Unavailable):
-        vscode_login.log_in("haicore", None)
+    monkeypatch.delenv(login_bridge.BRIDGE_VARIABLE, raising=False)
+    with pytest.raises(login_bridge.Unavailable):
+        login_bridge.log_in("haicore", None)
 
 
 def test_a_window_that_has_closed_is_unavailable(tmp_path: Path, monkeypatch) -> None:
     gone = r"\\.\pipe\ctun-vscode-gone" if sys.platform == "win32" else str(tmp_path / "gone.sock")
-    monkeypatch.setenv(vscode_login.BRIDGE_VARIABLE, gone)
-    with pytest.raises(vscode_login.Unavailable):
-        vscode_login.log_in("haicore", None)
+    monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, gone)
+    with pytest.raises(login_bridge.Unavailable):
+        login_bridge.log_in("haicore", None)
 
 
 def _patch_login(tmp_path: Path, monkeypatch, outcome) -> None:
@@ -75,25 +75,25 @@ def _patch_login(tmp_path: Path, monkeypatch, outcome) -> None:
     monkeypatch.setattr(paths, "cache_dir", lambda: tmp_path / "cache")
     monkeypatch.setattr(ssh, "is_live", lambda spec: False)
     monkeypatch.setattr(popup, "prompt_credentials", lambda *a, **k: (_ for _ in ()).throw(AssertionError("popup")))
-    monkeypatch.setattr(vscode_login, "log_in", lambda name, limit: outcome)
-    monkeypatch.setenv(vscode_login.BRIDGE_VARIABLE, "the-window")
+    monkeypatch.setattr(login_bridge, "log_in", lambda name, limit: outcome)
+    monkeypatch.setenv(login_bridge.BRIDGE_VARIABLE, "the-window")
 
 
 def test_login_keeps_the_session_the_window_started(tmp_path: Path, monkeypatch) -> None:
     from cluster_tunnel import session
 
     _cfg(tmp_path, monkeypatch)
-    _patch_login(tmp_path, monkeypatch, vscode_login.Outcome("live"))
+    _patch_login(tmp_path, monkeypatch, login_bridge.Outcome("live"))
     started = session.start("localhost", limit=20.0, unit="jobh")  # by the window's own login
     r = CliRunner().invoke(cli, ["-t", "localhost", "login", "-i"])
     assert r.exit_code == 0, r.output
-    assert "in VS Code" in r.output
+    assert "through the login bridge" in r.output
     assert session.load("localhost") == started
 
 
 def test_login_reports_a_failure_in_the_window(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
-    _patch_login(tmp_path, monkeypatch, vscode_login.Outcome("failed", "wrong OTP"))
+    _patch_login(tmp_path, monkeypatch, login_bridge.Outcome("failed", "wrong OTP"))
     r = CliRunner().invoke(cli, ["-t", "localhost", "login", "-i"])
     assert r.exit_code != 0
     assert "wrong OTP" in r.output

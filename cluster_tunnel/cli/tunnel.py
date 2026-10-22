@@ -31,24 +31,24 @@ def _stdin_credentials():
 
 
 def _logged_in_through_vscode(name: str, default_limit: float | None, config) -> bool:
-    """True once the VS Code window that started the agent has logged in; False if no window took it.
+    """True once the front end that started the agent has logged in; False if none took it.
 
     A tunnel that is up already needs no window: `api.login` keeps it.
     """
     import os
 
-    from cluster_tunnel import api, vscode_login
+    from cluster_tunnel import api, login_bridge
 
-    if not os.environ.get(vscode_login.BRIDGE_VARIABLE) or api.is_live(name, config=config):
+    if not os.environ.get(login_bridge.BRIDGE_VARIABLE) or api.is_live(name, config=config):
         return False
     try:
-        outcome = vscode_login.log_in(name, default_limit)
-    except vscode_login.Unavailable:
+        outcome = login_bridge.log_in(name, default_limit)
+    except login_bridge.Unavailable:
         return False
     if outcome.status == "cancelled":
         raise click.ClickException("Login cancelled.")
     if outcome.status != "live":
-        raise click.ClickException(f"Login to '{name}' in VS Code failed: {outcome.message}")
+        raise click.ClickException(f"Login to '{name}' through the login bridge failed: {outcome.message}")
     return True
 
 
@@ -93,8 +93,9 @@ class TunnelCommandsMixin:
         the service password and one-time passcode (OTP) in separate fields,
         which are fed to ssh at their respective prompts — the agent never sees
         the secrets. A front end that asks the human itself passes them with
-        `--credentials-stdin` instead. Inside a VS Code window with the ctun
-        extension, that window asks in its own input boxes instead of the pop-up.
+        `--credentials-stdin` instead. An agent started by such a front end (the
+        ctun VS Code extension) finds it in `CTUN_LOGIN_BRIDGE`, and `-i` lets the
+        front end ask in its own input boxes instead of the pop-up.
 
         Pass `-v` (or `-vv`/`-vvv`) to surface ssh's own connection diagnostics
         when a login fails — useful for debugging host, auth, or network errors.
@@ -131,7 +132,7 @@ class TunnelCommandsMixin:
 
         # The styled top line of the success panel.
         if in_vscode:
-            headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green] [dim](in VS Code)[/dim]."
+            headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green] [dim](through the login bridge)[/dim]."
         elif result.already_live:
             headline = f"[yellow]●[/yellow] Tunnel to [cyan]{name}[/cyan] is [yellow]already live[/yellow]."
         elif result.interactive:
