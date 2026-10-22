@@ -94,6 +94,7 @@ class Result:
     stdout: Optional[str] = None
     stderr: Optional[str] = None
     #: The IDs of every ``Submitted batch job <N>`` line a :func:`run` printed; empty with ``tty``.
+    #: Any such line counts (also one ``cat`` printed); ``sbatch --parsable`` prints none.
     job_ids: list[str] = field(default_factory=list)
 
     @property

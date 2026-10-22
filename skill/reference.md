@@ -251,8 +251,12 @@ temporary: cleared on `logout` and on a fresh `login`. Requires a target.
 
 A command whose output had `Submitted batch job <N>` lines also shows the job
 IDs, e.g. `sbatch train.sh  → job 4818213`; in the JSON, that command carries
-`"job_ids": ["4818213"]`. A `run --tty` logs no job IDs (ctun does not see its
-output).
+`"job_ids": ["4818213"]`. Each ID is logged as soon as the line is printed, so
+`sbatch --wait` and an interrupted run keep theirs. ctun only reads the output:
+any such line counts (`run -- cat submit.log` logs the IDs in that log),
+`sbatch --parsable` prints none to find, and the ID of a job sent elsewhere with
+`sbatch -M <cluster>` belongs to that cluster. A `run --tty` logs no job IDs
+(ctun does not see its output).
 
 ## `logout` — close the tunnel
 

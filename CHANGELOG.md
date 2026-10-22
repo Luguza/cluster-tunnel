@@ -20,8 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each `ctun run` submitted (every `Submitted batch job <N>` line of its output).
   `ctun logs` shows them after the command (`→ job 4818213`), `ctun logs --json`
   gives them as `job_ids`, and `api.run()` returns them in `Result.job_ids`. The
-  output still streams as it arrives. A `--tty` run logs none: ctun does not see
-  its output. Older logs still read.
+  output still streams as it arrives, and each ID is logged as soon as it is
+  printed, so `sbatch --wait` and an interrupted run keep theirs. Any such line
+  counts, so `run -- cat submit.log` logs the old IDs in it; `sbatch --parsable`
+  prints none, and the ID of a `sbatch -M <other>` job belongs to that cluster,
+  not to `slurm_cluster`. A `--tty` run logs none: ctun does not see its output.
+  Older logs still read.
 
 ## [0.8.0] - 2026-10-20
 
