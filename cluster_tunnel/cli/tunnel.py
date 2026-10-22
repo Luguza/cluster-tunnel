@@ -9,25 +9,28 @@ def _stdin_credentials():
     """Read ``{"password", "otp", "limit"}`` from stdin as login credentials.
 
     The secrets come through a pipe, never argv or the environment, like the
-    login window's own hand-off.
+    login window's own hand-off. Read as UTF-8 whatever the platform's default
+    (cp1252 on Windows would garble a non-ASCII password).
     """
     import json
-    import sys
+    import math
 
     from cluster_tunnel import api
 
     try:
-        raw = json.loads(sys.stdin.read())
+        raw = json.loads(click.get_binary_stream("stdin").read().decode("utf-8"))
+    except UnicodeDecodeError:
+        raise click.ClickException("--credentials-stdin: stdin is not UTF-8.") from None
     except ValueError as exc:
         raise click.ClickException(f"--credentials-stdin: stdin is not JSON ({exc}).") from None
     if not isinstance(raw, dict):
         raise click.ClickException("--credentials-stdin: expected a JSON object.")
-    password, otp, limit = raw.get("password") or "", raw.get("otp") or None, raw.get("limit")
+    password, otp, limit = raw.get("password", ""), raw.get("otp"), raw.get("limit")
     if not isinstance(password, str) or not (otp is None or isinstance(otp, str)):
         raise click.ClickException("--credentials-stdin: password and otp must be strings.")
-    if limit is not None and not isinstance(limit, (int, float)):
-        raise click.ClickException("--credentials-stdin: limit must be a number or null.")
-    return api.Credentials(password=password, otp=otp, limit=None if limit is None else float(limit))
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit)):
+        raise click.ClickException("--credentials-stdin: limit must be a number (-1 for none) or null.")
+    return api.Credentials(password=password, otp=otp or None, limit=None if limit is None else float(limit))
 
 
 def _logged_in_through_vscode(name: str, default_limit: float | None, config) -> bool:
