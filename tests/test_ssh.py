@@ -330,13 +330,17 @@ def test_scan_asks_for_the_algorithm_a_login_negotiates(tmp_path: Path) -> None:
 
 
 def _streaming(tmp_path: Path, monkeypatch, code: str) -> ConnSpec:
-    """A spec whose `run` starts a local Python child running ``code`` instead of ssh."""
+    """A spec whose `run` starts a local Python child running ``code`` instead of ssh.
+
+    The children write bytes, as ssh does: a text stdout would end lines in
+    ``\\r\\n`` on Windows.
+    """
     monkeypatch.setattr(wsl, "launch", lambda argv, distro=None: [sys.executable, "-c", code])
     return ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
 
 
 def test_streamed_run_passes_stdout_through_and_scans_its_lines(tmp_path: Path, monkeypatch, capsys) -> None:
-    code = "import sys; sys.stdout.write('a\\nSubmitted batch job 7\\ntail'); sys.exit(3)"
+    code = "import sys; sys.stdout.buffer.write(b'a\\nSubmitted batch job 7\\ntail'); sys.exit(3)"
     spec = _streaming(tmp_path, monkeypatch, code)
     lines: list[str] = []
     assert ssh.run(spec, ["sbatch", "j.sh"], on_line=lines.append) == 3
@@ -347,8 +351,8 @@ def test_streamed_run_passes_stdout_through_and_scans_its_lines(tmp_path: Path, 
 def test_streamed_run_joins_a_line_split_across_reads(tmp_path: Path, monkeypatch) -> None:
     code = (
         "import sys, time\n"
-        "sys.stdout.write('Submitted ba'); sys.stdout.flush(); time.sleep(0.2)\n"
-        "sys.stdout.write('tch job 8\\n')\n"
+        "sys.stdout.buffer.write(b'Submitted ba'); sys.stdout.flush(); time.sleep(0.2)\n"
+        "sys.stdout.buffer.write(b'tch job 8\\n')\n"
     )
     spec = _streaming(tmp_path, monkeypatch, code)
     lines: list[str] = []
@@ -357,7 +361,7 @@ def test_streamed_run_joins_a_line_split_across_reads(tmp_path: Path, monkeypatc
 
 
 def test_streamed_run_keeps_only_the_start_of_a_huge_line(tmp_path: Path, monkeypatch, capsys) -> None:
-    code = "import sys; sys.stdout.write('x' * 300000 + '\\nok\\n')"
+    code = "import sys; sys.stdout.buffer.write(b'x' * 300000 + b'\\nok\\n')"
     spec = _streaming(tmp_path, monkeypatch, code)
     lines: list[str] = []
     assert ssh.run(spec, ["cat", "big"], on_line=lines.append) == 0
@@ -379,7 +383,7 @@ def test_streamed_run_writes_text_to_a_stdout_without_bytes(tmp_path: Path, monk
 
 
 def test_streamed_run_without_a_stdout_still_scans(tmp_path: Path, monkeypatch) -> None:
-    spec = _streaming(tmp_path, monkeypatch, "print('Submitted batch job 10')")
+    spec = _streaming(tmp_path, monkeypatch, "import sys; sys.stdout.buffer.write(b'Submitted batch job 10\\n')")
     monkeypatch.setattr(sys, "stdout", None)  # as under pythonw.exe
     lines: list[str] = []
     assert ssh.run(spec, ["sbatch", "j.sh"], on_line=lines.append) == 0
@@ -393,10 +397,11 @@ def test_streamed_run_into_a_closed_pipe_ends_like_ssh_would(tmp_path: Path, mon
     # The child stands in for ssh: it gives up with 141 (SIGPIPE) once its pipe is closed.
     code = (
         "import os, sys\n"
-        "sys.stdout.write('Submitted batch job 11\\n'); sys.stdout.flush()\n"
+        "out = sys.stdout.buffer\n"
+        "out.write(b'Submitted batch job 11\\n'); out.flush()\n"
         "try:\n"
         "    for _ in range(100000):\n"
-        "        sys.stdout.write('y' * 1000 + '\\n'); sys.stdout.flush()\n"
+        "        out.write(b'y' * 1000 + b'\\n'); out.flush()\n"
         "except OSError:\n"
         "    os._exit(141)\n"
     )
