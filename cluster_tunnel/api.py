@@ -849,11 +849,12 @@ def edit_job(
     as in :func:`run` (:class:`NoteReferenceInvalid`). Each change is logged in
     the record's ``changes``; the facts from submit time never change. A job
     without a record (e.g. one submitted with plain ``sbatch``) gets one without
-    facts, if Slurm knows it. A record another machine changes meanwhile gets
-    the edit on top of that change. Raises :class:`LoginRequired` without a live
-    tunnel and :class:`RecordError` when ``job_id`` is no job ID or the job is
-    unknown, the cluster keeps no records, there is no note to confirm, or the
-    record can't be stored.
+    facts, if Slurm knows it; a task of an array without one gets a copy of the
+    array's record (see :func:`records.keys`). A record another machine changes
+    meanwhile gets the edit on top of that change. Raises :class:`LoginRequired`
+    without a live tunnel and :class:`RecordError` when ``job_id`` is no job ID
+    or the job is unknown, the cluster keeps no records, there is no note to
+    confirm, or the record can't be stored.
     """
     [edit] = edit_jobs(
         cluster, [job_id], project=project, note=note, confirm_note=confirm_note,
@@ -896,7 +897,16 @@ def edit_jobs(
     pending = job_ids
     try:
         for _ in range(_EDIT_ATTEMPTS):
-            found = {records_mod.job_id_of(item.record): item for item in records_mod.read_many(spec, pending)}
+            arrays = [records_mod.keys(job_id)[-1] for job_id in pending]
+            found = {
+                records_mod.job_id_of(item.record): item
+                for item in records_mod.read_many(spec, list(dict.fromkeys(pending + arrays)))
+            }
+            for job_id, array in zip(pending, arrays):
+                if job_id not in found and array in found:
+                    # A task's first record of its own starts as its array's, facts and all.
+                    record = {**found[array].record, "job_id": job_id, "changes": []}
+                    found[job_id] = records_mod.Stored(record, records_mod.ABSENT)
             missing = [job_id for job_id in pending if job_id not in found]
             unknown = notes_mod.unknown_references(spec, [f"job:{job_id}" for job_id in missing])
             if unknown:

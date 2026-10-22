@@ -428,6 +428,19 @@ def test_job_edit_refuses_what_is_no_job_id(tmp_path: Path, monkeypatch) -> None
     assert cluster.written == {} and cluster.note_checks == []
 
 
+def test_a_tasks_first_record_starts_from_its_arrays(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    array = {"job_id": "5131", "project": "htfm", "note": "sweep", "code": {"commit": "abc"}, "changes": [{"at": 1}]}
+    cluster.written["5131"] = array
+    _patch_job(monkeypatch, cluster)
+    assert api.edit_job("localhost", "5131_4", note="the diverging one").changed
+    task = cluster.written["5131_4"]
+    assert task["project"] == "htfm" and task["code"] == {"commit": "abc"} and task["note"] == "the diverging one"
+    assert [change["note"] for change in task["changes"]] == [["sweep", "the diverging one"]]
+    assert cluster.written["5131"] == array and cluster.note_checks == []  # no need to ask Slurm
+
+
 def test_job_edit_takes_an_array_task(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     cluster = FakeCluster(known_refs=("job:5131_4",))

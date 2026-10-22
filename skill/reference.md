@@ -113,7 +113,8 @@ job's own repo too; an unknown one refuses the edit (exit code 13).
 Each edit appends `{at, from, <field>: [old, new]}` to the record's `changes`;
 the facts from submit time are never changed. A job that has no record yet
 (e.g. one submitted with plain `sbatch`) gets one without facts; ctun refuses a
-job that Slurm doesn't know.
+job that Slurm doesn't know. A task of an array (`jobs edit 123_4`) gets a copy
+of the array's record to change, so it keeps the array's project and facts.
 
 **Only change a job after the user's explicit yes** to the exact command.
 
